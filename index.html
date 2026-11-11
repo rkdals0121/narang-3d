@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>나랑이 3D</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root { --bg: #FFF6DD; --ink: #2B2318; --sub: #6B5A3A; --line: #E3D8C0; --accent: #F7C51E; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; height: 100dvh; }
+  header { padding: calc(16px + env(safe-area-inset-top)) 20px 4px; }
+  header p { margin: 0 0 2px; font-size: 13px; color: #8A6A1F; font-weight: 600; }
+  h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; font-size: 15px; color: var(--sub); text-align: center; }
+  .hint { position: absolute; left: 0; right: 0; bottom: 6px; margin: 0; text-align: center; font-size: 12px; color: var(--sub); pointer-events: none; }
+  nav { padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  button { height: 46px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; color: #4A3D28;
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--ink); color: var(--ink); }
+  button:focus-visible { outline: 3px solid #2B6CB0; outline-offset: 2px; }
+  @media (min-width: 900px) {
+    body { max-width: 1100px; margin: 0 auto; }
+    nav { flex-direction: row; justify-content: center; }
+    .row { width: 480px; }
+    #auto { width: 200px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <p>ESG 공모전 본선 마스코트</p>
+  <h1>나랑이 3D</h1>
+</header>
+<main id="stage">
+  <canvas role="img" aria-label="나랑이 캐릭터 3D 모델"></canvas>
+  <p id="status">3D 모델 불러오는 중…</p>
+  <p class="hint">한 손가락으로 돌리기 · 두 손가락으로 확대</p>
+</main>
+<nav aria-label="시점">
+  <div class="row">
+    <button type="button" data-view="front" aria-pressed="true">정면</button>
+    <button type="button" data-view="left" aria-pressed="false">좌측</button>
+    <button type="button" data-view="back" aria-pressed="false">후면</button>
+    <button type="button" data-view="right" aria-pressed="false">우측</button>
+  </div>
+  <button type="button" id="auto" aria-pressed="false">빙글빙글 돌리기</button>
+</nav>
+<script src="three.min.js"></script>
+<script src="viewer.js"></script>
+<script>
+  (function () {
+    var statusEl = document.getElementById('status');
+    var viewBtns = Array.prototype.slice.call(document.querySelectorAll('[data-view]'));
+    var autoBtn = document.getElementById('auto');
+    function markView(id) { viewBtns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.view === id)); }); }
+    function markAuto(on) { autoBtn.setAttribute('aria-pressed', String(on)); autoBtn.textContent = on ? '회전 중 · 멈추기' : '빙글빙글 돌리기'; }
+    var auto = false;
+    var v = NarangViewer.create(document.getElementById('stage'), 'narang.gltf.json', {
+      onStatus: function (s, msg) {
+        if (s === 'ready') statusEl.hidden = true;
+        else if (s === 'error') { statusEl.hidden = false; statusEl.textContent = '모델을 불러오지 못했습니다. ' + (msg || ''); }
+      },
+      onUserMove: function () { markView(''); if (auto) { auto = false; markAuto(false); } }
+    });
+    viewBtns.forEach(function (b) {
+      b.addEventListener('click', function () { auto = false; markAuto(false); v.setView(b.dataset.view); markView(b.dataset.view); });
+    });
+    autoBtn.addEventListener('click', function () { auto = !auto; v.setAuto(auto); markAuto(auto); if (auto) markView(''); });
+  })();
+</script>
+</body>
+</html>
