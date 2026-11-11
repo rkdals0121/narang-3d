@@ -221,7 +221,7 @@
     var pose = new T.Group(); root.add(pose);         // pivot at the feet: tilt, hop, squash
     pose.position.y = -1.5;
     var slp = new T.Group(); root.add(slp); slp.position.y = -1.5; slp.visible = false; // lying-down model
-    var sleeperReady = false;
+    var sleeperReady = false, sleepKind = 'sit';   // sit = nod off sitting, lie = lying-down model
 
     // ground shadow
     var shTex = spriteTex(256, function (x, s) {
@@ -359,7 +359,7 @@
 
       // body motion
       var sleeping = mode === 'sleep';
-      var lying = sleeping && sleeperReady;
+      var lying = sleeping && sleepKind === 'lie' && sleeperReady;
       var breathe = Math.sin(t * (sleeping ? 1.6 : 2.4));
       var hopY = 0, sq = 0, shake = 0, tx = sleeping ? 0.2 : 0, tz = sleeping ? -0.1 : 0, glowT = sleeping ? 0.12 : 1;
       var flutter = 1, seatS = 1, slpS = 1, slpShake = 0, showSeat = !lying, showSlp = lying;
@@ -378,7 +378,7 @@
           else if (s >= 0.78) {
             showSeat = false; showSlp = true;
             slpS = 0.58 + 0.42 * backOut(clamp((s - 0.78) / 0.45, 0, 1));
-            if (s > 1.25) { seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep'); }
+            if (s > 1.25) { seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep', sleepKind); }
           }
         } else if (seq.type === 'wake' && seq.slp && s < 0.9) {
           // lying model wiggles (0-0.6), shrinks with a puff (0.6-0.9)
@@ -395,7 +395,7 @@
             tx = 0.2 * (1 - up); tz = -0.1 * (1 - up);
             if (s < 2.2) setExpr('surprise');
             else if (s < 3.3) setExpr('laugh');
-            else { setExpr('smile'); mode = 'awake'; seq = null; if (opts.onMode) opts.onMode('awake'); }
+            else { setExpr('smile'); mode = 'awake'; seq = null; if (opts.onMode) opts.onMode('awake', sleepKind); }
             var f = s - 0.6;
             flutter = f < 0.18 ? 0.35 : f < 0.3 ? 0 : f < 0.48 ? 0.55 : f < 0.58 ? 0.05 : 1;
             glowT = s > 1.2 ? 1 : 0.12;
@@ -539,7 +539,7 @@
           var box = new T.Box3().setFromObject(holder), size = box.getSize(new T.Vector3()), c = box.getCenter(new T.Vector3());
           var k = 2.35 / size.y;
           holder.scale.setScalar(k); holder.position.set(-c.x * k, -box.min.y * k, -c.z * k);
-          slp.add(holder); sleeperReady = true;
+          slp.add(holder); sleeperReady = true; if (opts.onLieReady) opts.onLieReady();
         });
       }).catch(function (e) { console.warn('lying model', e); });
     }
@@ -550,8 +550,8 @@
       setExpr: function (name) {
         if (seq && (seq.type === 'wake' || seq.type === 'sleepIn')) return;
         if (name === 'sleep') { api.sleep(); return; }
-        if (mode === 'sleep' && sleeperReady) { api.wake(); return; }
-        if (mode === 'sleep') { mode = 'awake'; zzzOn = false; if (opts.onMode) opts.onMode('awake'); }
+        if (mode === 'sleep' && sleepKind === 'lie') { api.wake(); return; }
+        if (mode === 'sleep') { mode = 'awake'; zzzOn = false; if (opts.onMode) opts.onMode('awake', sleepKind); }
         seq = null; setExpr(name);
       },
       hop: function () {
@@ -560,16 +560,18 @@
         seq = { type: 'hop', t0: performance.now(), back: back };
         setExpr('laugh'); burst(14);
       },
-      sleep: function () {
+      sleep: function (kind) {
         if (mode === 'sleep' || (seq && (seq.type === 'wake' || seq.type === 'sleepIn'))) return;
         setExpr('sleep');
-        if (sleeperReady) { seq = { type: 'sleepIn', t0: performance.now() }; if (opts.onMode) opts.onMode('sleeping'); return; }
-        seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep');
+        sleepKind = kind === 'lie' && sleeperReady ? 'lie' : 'sit';
+        if (sleepKind === 'lie') { seq = { type: 'sleepIn', t0: performance.now() }; if (opts.onMode) opts.onMode('sleeping', sleepKind); return; }
+        seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep', sleepKind);
       },
+      canLie: function () { return sleeperReady; },
       wake: function () {
         if (mode !== 'sleep' || (seq && seq.type === 'wake')) return;
         zzzOn = false;
-        seq = { type: 'wake', t0: performance.now(), slp: sleeperReady }; if (opts.onMode) opts.onMode('waking');
+        seq = { type: 'wake', t0: performance.now(), slp: sleepKind === 'lie' && sleeperReady }; if (opts.onMode) opts.onMode('waking', sleepKind);
       },
       dispose: function () {
         dead = true; cancelAnimationFrame(raf); ro.disconnect();

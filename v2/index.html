@@ -30,12 +30,14 @@
     font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
   button[aria-pressed="true"] { background: var(--accent); border-color: var(--ink); color: var(--ink); }
   button:disabled { opacity: 0.45; cursor: default; }
+  button small { font-size: 11px; font-weight: 500; color: var(--sub); }
+  #sitBtn, #lieBtn { line-height: 1.15; }
   button:focus-visible { outline: 3px solid #2B6CB0; outline-offset: 2px; }
   @media (max-width: 380px) { .r6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (min-width: 900px) {
     body { max-width: 1100px; margin: 0 auto; }
     nav { flex-direction: row; justify-content: center; align-items: flex-end; gap: 20px; }
-    .g-expr { width: 460px; } .g-act { width: 330px; } .g-view { width: 260px; }
+    .g-expr { width: 460px; } .g-act { width: 400px; } .g-view { width: 260px; }
   }
 </style>
 </head>
@@ -63,8 +65,9 @@
   </div>
   <div class="group g-act">
     <p class="label" id="l-act">동작</p>
-    <div class="row r3" role="group" aria-labelledby="l-act">
-      <button type="button" id="sleepBtn">재우기</button>
+    <div class="row r4" role="group" aria-labelledby="l-act">
+      <button type="button" id="sitBtn">자기 1<br><small>앉아서</small></button>
+      <button type="button" id="lieBtn" disabled>자기 2<br><small>엎드려</small></button>
       <button type="button" id="hopBtn">점프</button>
       <button type="button" id="autoBtn" aria-pressed="false">빙글빙글</button>
     </div>
@@ -80,18 +83,23 @@
   </div>
 </nav>
 <script src="three.min.js?v=149"></script>
-<script src="viewer.js?v=5"></script>
+<script src="viewer.js?v=6"></script>
 <script>
   (function () {
     var $ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
     var statusEl = document.getElementById('status');
-    var sleepBtn = document.getElementById('sleepBtn'), hopBtn = document.getElementById('hopBtn'), autoBtn = document.getElementById('autoBtn');
-    var auto = false, mode = 'awake';
+    var sitBtn = document.getElementById('sitBtn'), lieBtn = document.getElementById('lieBtn'), hopBtn = document.getElementById('hopBtn'), autoBtn = document.getElementById('autoBtn');
+    var auto = false, mode = 'awake', kind = 'sit', lieReady = false;
     function mark(sel, attr, val) { $(sel).forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)); }); }
-    function setMode(m) {
-      mode = m;
-      sleepBtn.textContent = m === 'sleep' ? '깨우기' : m === 'waking' ? '깨는 중…' : m === 'sleeping' ? '잠드는 중…' : '재우기';
-      sleepBtn.disabled = m === 'waking' || m === 'sleeping';
+    var LABEL = { sit: '자기 1<br><small>앉아서</small>', lie: '자기 2<br><small>엎드려</small>' };
+    function setMode(m, k) {
+      mode = m; if (k) kind = k;
+      [['sit', sitBtn], ['lie', lieBtn]].forEach(function (pair) {
+        var id = pair[0], b = pair[1], mine = kind === id;
+        if (m === 'awake') { b.innerHTML = LABEL[id]; b.disabled = id === 'lie' && !lieReady; b.setAttribute('aria-pressed', 'false'); }
+        else if (m === 'sleep') { b.innerHTML = mine ? '깨우기' : LABEL[id]; b.disabled = !mine; b.setAttribute('aria-pressed', String(mine)); }
+        else { b.innerHTML = mine ? (m === 'waking' ? '깨는 중…' : '잠드는 중…') : LABEL[id]; b.disabled = true; }
+      });
       hopBtn.disabled = m !== 'awake';
     }
     var v = NarangViewer.create(document.getElementById('stage'), 'narang.glb?v=2', {
@@ -102,6 +110,7 @@
       },
       onExpr: function (name) { mark('[data-expr]', 'data-expr', name); },
       onMode: setMode,
+      onLieReady: function () { lieReady = true; if (mode === 'awake') lieBtn.disabled = false; },
       onAuto: function (on) { auto = on; autoBtn.setAttribute('aria-pressed', String(on)); },
       onUserMove: function () { mark('[data-view]', 'data-view', ''); }
     });
@@ -109,7 +118,8 @@
     $('[data-view]').forEach(function (b) {
       b.addEventListener('click', function () { auto = false; autoBtn.setAttribute('aria-pressed', 'false'); v.setView(b.dataset.view); mark('[data-view]', 'data-view', b.dataset.view); });
     });
-    sleepBtn.addEventListener('click', function () { if (mode === 'sleep') v.wake(); else if (mode === 'awake') v.sleep(); });
+    sitBtn.addEventListener('click', function () { if (mode === 'sleep') v.wake(); else if (mode === 'awake') v.sleep('sit'); });
+    lieBtn.addEventListener('click', function () { if (mode === 'sleep') v.wake(); else if (mode === 'awake') v.sleep('lie'); });
     hopBtn.addEventListener('click', function () { v.hop(); });
     autoBtn.addEventListener('click', function () { auto = !auto; v.setAuto(auto); autoBtn.setAttribute('aria-pressed', String(auto)); if (auto) mark('[data-view]', 'data-view', ''); });
     window.narang = v;
