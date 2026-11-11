@@ -79,8 +79,8 @@
     </div>
   </div>
 </nav>
-<script src="three.min.js"></script>
-<script src="viewer.js"></script>
+<script src="three.min.js?v=149"></script>
+<script src="viewer.js?v=3"></script>
 <script>
   (function () {
     var $ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
@@ -94,7 +94,7 @@
       sleepBtn.disabled = m === 'waking';
       hopBtn.disabled = m !== 'awake';
     }
-    var v = NarangViewer.create(document.getElementById('stage'), 'narang.glb', {
+    var v = NarangViewer.create(document.getElementById('stage'), 'narang.glb?v=2', {
       onStatus: function (s, msg) {
         if (s === 'ready') statusEl.hidden = true;
         else if (s === 'error') { statusEl.hidden = false; statusEl.textContent = '모델을 불러오지 못했습니다. ' + (msg || ''); }
