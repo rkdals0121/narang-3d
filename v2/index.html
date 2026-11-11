@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>나랑이 3D</title>
+<style>
+  :root { --bg: #FFF6DD; --ink: #2B2318; --sub: #6B5A3A; --line: #E3D8C0; --accent: #F7C51E; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; height: 100dvh; }
+  header { padding: calc(14px + env(safe-area-inset-top)) 20px 0; }
+  header p { margin: 0 0 2px; font-size: 13px; color: #8A6A1F; font-weight: 600; }
+  h1 { margin: 0; font-size: 24px; line-height: 1.2; }
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; font-size: 15px; color: var(--sub); text-align: center; }
+  .hint { position: absolute; left: 0; right: 0; bottom: 4px; margin: 0; text-align: center; font-size: 12px; color: var(--sub); pointer-events: none; }
+  nav { padding: 8px 14px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  .label { margin: 0; font-size: 12px; font-weight: 700; color: var(--sub); }
+  .group { display: flex; flex-direction: column; gap: 5px; }
+  .row { display: grid; gap: 6px; }
+  .r6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .r4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .r3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  button { min-height: 44px; padding: 0 4px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; color: #4A3D28;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--ink); color: var(--ink); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:focus-visible { outline: 3px solid #2B6CB0; outline-offset: 2px; }
+  @media (max-width: 380px) { .r6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 900px) {
+    body { max-width: 1100px; margin: 0 auto; }
+    nav { flex-direction: row; justify-content: center; align-items: flex-end; gap: 20px; }
+    .g-expr { width: 460px; } .g-act { width: 330px; } .g-view { width: 260px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <p>ESG 공모전 본선 마스코트</p>
+  <h1>나랑이 3D</h1>
+</header>
+<main id="stage">
+  <canvas role="img" aria-label="나랑이 캐릭터 3D 모델"></canvas>
+  <p id="status">3D 모델 불러오는 중…</p>
+  <p class="hint">드래그로 돌리기 · 두 손가락으로 확대 · 탭하면 점프</p>
+</main>
+<nav>
+  <div class="group g-expr">
+    <p class="label" id="l-expr">표정</p>
+    <div class="row r6" role="group" aria-labelledby="l-expr">
+      <button type="button" data-expr="smile" aria-pressed="true">웃음</button>
+      <button type="button" data-expr="laugh" aria-pressed="false">깔깔</button>
+      <button type="button" data-expr="wink" aria-pressed="false">윙크</button>
+      <button type="button" data-expr="surprise" aria-pressed="false">놀람</button>
+      <button type="button" data-expr="sad" aria-pressed="false">시무룩</button>
+      <button type="button" data-expr="sleep" aria-pressed="false">졸림</button>
+    </div>
+  </div>
+  <div class="group g-act">
+    <p class="label" id="l-act">동작</p>
+    <div class="row r3" role="group" aria-labelledby="l-act">
+      <button type="button" id="sleepBtn">재우기</button>
+      <button type="button" id="hopBtn">점프</button>
+      <button type="button" id="autoBtn" aria-pressed="false">빙글빙글</button>
+    </div>
+  </div>
+  <div class="group g-view">
+    <p class="label" id="l-view">시점</p>
+    <div class="row r4" role="group" aria-labelledby="l-view">
+      <button type="button" data-view="front" aria-pressed="true">정면</button>
+      <button type="button" data-view="left" aria-pressed="false">좌측</button>
+      <button type="button" data-view="back" aria-pressed="false">후면</button>
+      <button type="button" data-view="right" aria-pressed="false">우측</button>
+    </div>
+  </div>
+</nav>
+<script src="three.min.js"></script>
+<script src="viewer.js"></script>
+<script>
+  (function () {
+    var $ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+    var statusEl = document.getElementById('status');
+    var sleepBtn = document.getElementById('sleepBtn'), hopBtn = document.getElementById('hopBtn'), autoBtn = document.getElementById('autoBtn');
+    var auto = false, mode = 'awake';
+    function mark(sel, attr, val) { $(sel).forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)); }); }
+    function setMode(m) {
+      mode = m;
+      sleepBtn.textContent = m === 'sleep' ? '깨우기' : m === 'waking' ? '깨는 중…' : '재우기';
+      sleepBtn.disabled = m === 'waking';
+      hopBtn.disabled = m !== 'awake';
+    }
+    var v = NarangViewer.create(document.getElementById('stage'), 'narang.glb', {
+      onStatus: function (s, msg) {
+        if (s === 'ready') statusEl.hidden = true;
+        else if (s === 'error') { statusEl.hidden = false; statusEl.textContent = '모델을 불러오지 못했습니다. ' + (msg || ''); }
+      },
+      onExpr: function (name) { mark('[data-expr]', 'data-expr', name); },
+      onMode: setMode,
+      onAuto: function (on) { auto = on; autoBtn.setAttribute('aria-pressed', String(on)); },
+      onUserMove: function () { mark('[data-view]', 'data-view', ''); }
+    });
+    $('[data-expr]').forEach(function (b) { b.addEventListener('click', function () { v.setExpr(b.dataset.expr); }); });
+    $('[data-view]').forEach(function (b) {
+      b.addEventListener('click', function () { auto = false; autoBtn.setAttribute('aria-pressed', 'false'); v.setView(b.dataset.view); mark('[data-view]', 'data-view', b.dataset.view); });
+    });
+    sleepBtn.addEventListener('click', function () { if (mode === 'sleep') v.wake(); else if (mode === 'awake') v.sleep(); });
+    hopBtn.addEventListener('click', function () { v.hop(); });
+    autoBtn.addEventListener('click', function () { auto = !auto; v.setAuto(auto); autoBtn.setAttribute('aria-pressed', String(auto)); if (auto) mark('[data-view]', 'data-view', ''); });
+    window.narang = v;
+  })();
+</script>
+</body>
+</html>
