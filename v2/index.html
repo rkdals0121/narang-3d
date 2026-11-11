@@ -80,7 +80,7 @@
   </div>
 </nav>
 <script src="three.min.js?v=149"></script>
-<script src="viewer.js?v=3"></script>
+<script src="viewer.js?v=5"></script>
 <script>
   (function () {
     var $ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
@@ -90,11 +90,12 @@
     function mark(sel, attr, val) { $(sel).forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)); }); }
     function setMode(m) {
       mode = m;
-      sleepBtn.textContent = m === 'sleep' ? '깨우기' : m === 'waking' ? '깨는 중…' : '재우기';
-      sleepBtn.disabled = m === 'waking';
+      sleepBtn.textContent = m === 'sleep' ? '깨우기' : m === 'waking' ? '깨는 중…' : m === 'sleeping' ? '잠드는 중…' : '재우기';
+      sleepBtn.disabled = m === 'waking' || m === 'sleeping';
       hopBtn.disabled = m !== 'awake';
     }
     var v = NarangViewer.create(document.getElementById('stage'), 'narang.glb?v=2', {
+      sleepUrl: 'sleep.glb?v=1',
       onStatus: function (s, msg) {
         if (s === 'ready') statusEl.hidden = true;
         else if (s === 'error') { statusEl.hidden = false; statusEl.textContent = '모델을 불러오지 못했습니다. ' + (msg || ''); }

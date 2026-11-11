@@ -38,6 +38,29 @@
     return geo;
   }
 
+  // average normals across UV seams so a low-poly scan shades smoothly
+  function smoothNormals(geo) {
+    var pos = geo.attributes.position, n = pos.count, map = new Map(), key = new Int32Array(n), acc = [];
+    for (var i = 0; i < n; i++) {
+      var k = Math.round(pos.getX(i) * 1e4) + ',' + Math.round(pos.getY(i) * 1e4) + ',' + Math.round(pos.getZ(i) * 1e4);
+      var id = map.get(k); if (id === undefined) { id = acc.length / 3; map.set(k, id); acc.push(0, 0, 0); }
+      key[i] = id;
+    }
+    var idx = geo.index, tri = idx ? idx.count / 3 : n / 3, a = new T.Vector3(), b = new T.Vector3(), c = new T.Vector3();
+    for (var f = 0; f < tri; f++) {
+      var i0 = idx ? idx.getX(f * 3) : f * 3, i1 = idx ? idx.getX(f * 3 + 1) : f * 3 + 1, i2 = idx ? idx.getX(f * 3 + 2) : f * 3 + 2;
+      a.fromBufferAttribute(pos, i0); b.fromBufferAttribute(pos, i1); c.fromBufferAttribute(pos, i2);
+      c.sub(b); a.sub(b); c.cross(a);
+      [i0, i1, i2].forEach(function (v) { var o = key[v] * 3; acc[o] += c.x; acc[o + 1] += c.y; acc[o + 2] += c.z; });
+    }
+    var out = new Float32Array(n * 3);
+    for (var j = 0; j < n; j++) {
+      var o = key[j] * 3, x = acc[o], y = acc[o + 1], z = acc[o + 2], L = Math.hypot(x, y, z) || 1;
+      out[j * 3] = x / L; out[j * 3 + 1] = y / L; out[j * 3 + 2] = z / L;
+    }
+    geo.setAttribute('normal', new T.BufferAttribute(out, 3));
+  }
+
   function loadTex(g, bin, ti, srgb, aniso) {
     var img = g.images[g.textures[ti].source], bv = g.bufferViews[img.bufferView];
     var bytes = new Uint8Array(bin.buffer, bin.byteOffset + (bv.byteOffset || 0), bv.byteLength);
@@ -197,6 +220,8 @@
     var root = new T.Group(); scene.add(root);        // yaw
     var pose = new T.Group(); root.add(pose);         // pivot at the feet: tilt, hop, squash
     pose.position.y = -1.5;
+    var slp = new T.Group(); root.add(slp); slp.position.y = -1.5; slp.visible = false; // lying-down model
+    var sleeperReady = false;
 
     // ground shadow
     var shTex = spriteTex(256, function (x, s) {
@@ -316,6 +341,7 @@
 
     function setExpr(name) { if (EXPR[name] && exprName !== name) { tgt = EXPR[name]; exprName = name; if (opts.onExpr) opts.onExpr(name); } }
     function ease(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+    function backOut(t) { var c1 = 1.9; t = t - 1; return t * t * ((c1 + 1) * t + c1) + 1; }
 
     var raf = 0, last = performance.now(), dead = false;
     function frame(now) {
@@ -333,9 +359,10 @@
 
       // body motion
       var sleeping = mode === 'sleep';
+      var lying = sleeping && sleeperReady;
       var breathe = Math.sin(t * (sleeping ? 1.6 : 2.4));
       var hopY = 0, sq = 0, shake = 0, tx = sleeping ? 0.2 : 0, tz = sleeping ? -0.1 : 0, glowT = sleeping ? 0.12 : 1;
-      var flutter = 1;
+      var flutter = 1, seatS = 1, slpS = 1, slpShake = 0, showSeat = !lying, showSlp = lying;
       if (seq) {
         var s = (now - seq.t0) / 1000;
         if (seq.type === 'hop') {
@@ -344,7 +371,23 @@
           sq = hp < 1 ? 0.1 * Math.sin(PI * hp) : 0;
           if (s > 0.62 && s < 0.82) sq = -0.1 * Math.sin(PI * (s - 0.62) / 0.2);
           if (s > 1.3) { var back = seq.back; seq = null; setExpr(back); }
+        } else if (seq.type === 'sleepIn') {
+          // close eyes and nod (0-0.5), shrink with a puff (0.5-0.78), pop up lying down (0.78-1.25)
+          var a0 = ease(s / 0.5); tx = 0.2 * a0; tz = -0.1 * a0; glowT = 0.12;
+          if (s >= 0.5 && s < 0.78) { seatS = 1 - 0.42 * ease((s - 0.5) / 0.28); if (!seq.burst) { seq.burst = true; burst(16); } }
+          else if (s >= 0.78) {
+            showSeat = false; showSlp = true;
+            slpS = 0.58 + 0.42 * backOut(clamp((s - 0.78) / 0.45, 0, 1));
+            if (s > 1.25) { seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep'); }
+          }
+        } else if (seq.type === 'wake' && seq.slp && s < 0.9) {
+          // lying model wiggles (0-0.6), shrinks with a puff (0.6-0.9)
+          showSeat = false; showSlp = true; tx = 0.2; tz = -0.1; glowT = 0.12;
+          if (s < 0.6) slpShake = Math.sin(s * 40) * 0.05 * (1 - s / 0.6);
+          else { slpS = 1 - 0.42 * ease((s - 0.6) / 0.3); if (!seq.burst0) { seq.burst0 = true; burst(16); } }
         } else if (seq.type === 'wake') {
+          showSeat = true; showSlp = false;
+          if (seq.slp) { seatS = 0.58 + 0.42 * backOut(clamp((s - 0.9) / 0.4, 0, 1)); s -= 0.3; }
           // 0–0.6 twitch, 0.6–1.2 eyes flutter, head comes up, 1.2 lights on, 1.55 jump, 2.2 laugh, 3.3 smile
           if (s < 0.6) { shake = Math.sin(s * 45) * 0.035 * (1 - s / 0.6); tx = 0.2; tz = -0.1; glowT = 0.12; }
           else {
@@ -366,10 +409,15 @@
       var kk = Math.min(1, dt * 4);
       tiltX += (tx - tiltX) * kk; tiltZ += (tz - tiltZ) * kk; glow += (glowT - glow) * Math.min(1, dt * 3);
       var bAmp = sleeping ? 0.022 : 0.012;
+      pose.visible = showSeat; slp.visible = showSlp;
+      var sxz = 1 + (1 - seatS) * 0.6;
       pose.position.y = -1.5 + hopY;
       pose.rotation.set(tiltX + shake * 0.3, 0, tiltZ + shake + (sleeping ? 0 : Math.sin(t * 0.8) * 0.025));
-      pose.scale.set(1 - sq * 0.5 - breathe * bAmp * 0.5, 1 + sq + breathe * bAmp, 1 - sq * 0.5 - breathe * bAmp * 0.5);
-      shadow.scale.setScalar(1 - hopY * 0.35);
+      pose.scale.set((1 - sq * 0.5 - breathe * bAmp * 0.5) * sxz, (1 + sq + breathe * bAmp) * seatS, (1 - sq * 0.5 - breathe * bAmp * 0.5) * sxz);
+      var lxz = slpS * (1 + (1 - slpS) * 0.5) * (1 - breathe * 0.012);
+      slp.scale.set(lxz, slpS * (1 + breathe * 0.03), lxz);
+      slp.rotation.z = slpShake;
+      shadow.scale.set((showSlp ? 1.25 : 1) * (1 - hopY * 0.35), 1, 1 - hopY * 0.35);
       shadow.material.opacity = 1 - hopY * 0.8;
 
       // blink
@@ -394,11 +442,12 @@
       }
 
       // zzz
+      var zBase = slp.visible ? 0.15 : 0.55;
       zs.forEach(function (z, i) {
         var ph = ((t * 0.45) + i / 3) % 1;
         var target = (zzzOn && mode === 'sleep') ? Math.sin(PI * ph) : 0;
-        z.material.opacity += (target - z.material.opacity) * Math.min(1, dt * 5);
-        z.position.set(-0.95 - ph * 0.4, 0.55 + ph * 0.8, 0.35);
+        z.material.opacity += (target - z.material.opacity) * Math.min(1, dt * (target > 0 ? 5 : 12));
+        z.position.set(-0.95 - ph * 0.4, zBase + ph * 0.8, 0.35);
         z.scale.setScalar(0.2 + ph * 0.24);
       });
 
@@ -473,32 +522,54 @@
         pose.add(holder);
         ready = true;
         status('ready');
+        loadSleeper();
       });
     }).catch(function (err) { console.error('narang viewer', err); status('error', String(err && err.message || err)); });
+
+    function loadSleeper() {
+      if (!opts.sleepUrl) return;
+      fetch(opts.sleepUrl).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(function (ab) {
+        var gl = parseGLB(ab), g = gl.g, bin = gl.bin, pbr = g.materials[0].pbrMetallicRoughness || {};
+        return loadTex(g, bin, pbr.baseColorTexture.index, true, aniso).then(function (tex) {
+          if (dead) return;
+          var mat = new T.MeshPhysicalMaterial({ map: tex, roughness: 0.85, metalness: 0, envMapIntensity: 0.55, sheen: 0.3, sheenRoughness: 0.45, sheenColor: new T.Color('#ffe8a0') });
+          var m = new T.Group();
+          g.meshes.forEach(function (mm) { mm.primitives.forEach(function (p) { var geo = buildGeometry(g, bin, p); smoothNormals(geo); m.add(new T.Mesh(geo, mat)); }); });
+          var holder = new T.Group(); holder.add(m); holder.updateMatrixWorld(true);
+          var box = new T.Box3().setFromObject(holder), size = box.getSize(new T.Vector3()), c = box.getCenter(new T.Vector3());
+          var k = 2.35 / size.y;
+          holder.scale.setScalar(k); holder.position.set(-c.x * k, -box.min.y * k, -c.z * k);
+          slp.add(holder); sleeperReady = true;
+        });
+      }).catch(function (e) { console.warn('lying model', e); });
+    }
 
     var api = {
       setView: function (id) { var tv = VIEWS[id] || 0; tYaw = tv + 2 * PI * Math.round((tYaw - tv) / (2 * PI)); tPitch = 0.1; auto = false; },
       setAuto: function (on) { auto = !!on; },
       setExpr: function (name) {
-        if (seq && seq.type === 'wake') return;
+        if (seq && (seq.type === 'wake' || seq.type === 'sleepIn')) return;
         if (name === 'sleep') { api.sleep(); return; }
+        if (mode === 'sleep' && sleeperReady) { api.wake(); return; }
         if (mode === 'sleep') { mode = 'awake'; zzzOn = false; if (opts.onMode) opts.onMode('awake'); }
         seq = null; setExpr(name);
       },
       hop: function () {
-        if (!ready || mode === 'sleep' || (seq && seq.type === 'wake')) return;
+        if (!ready || mode === 'sleep' || (seq && (seq.type === 'wake' || seq.type === 'sleepIn'))) return;
         var back = seq && seq.type === 'hop' ? seq.back : exprName;
         seq = { type: 'hop', t0: performance.now(), back: back };
         setExpr('laugh'); burst(14);
       },
       sleep: function () {
-        if (seq && seq.type === 'wake') return;
-        seq = null; mode = 'sleep'; zzzOn = true; setExpr('sleep'); if (opts.onMode) opts.onMode('sleep');
+        if (mode === 'sleep' || (seq && (seq.type === 'wake' || seq.type === 'sleepIn'))) return;
+        setExpr('sleep');
+        if (sleeperReady) { seq = { type: 'sleepIn', t0: performance.now() }; if (opts.onMode) opts.onMode('sleeping'); return; }
+        seq = null; mode = 'sleep'; zzzOn = true; if (opts.onMode) opts.onMode('sleep');
       },
       wake: function () {
         if (mode !== 'sleep' || (seq && seq.type === 'wake')) return;
         zzzOn = false;
-        seq = { type: 'wake', t0: performance.now() }; if (opts.onMode) opts.onMode('waking');
+        seq = { type: 'wake', t0: performance.now(), slp: sleeperReady }; if (opts.onMode) opts.onMode('waking');
       },
       dispose: function () {
         dead = true; cancelAnimationFrame(raf); ro.disconnect();
