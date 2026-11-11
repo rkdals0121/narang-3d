@@ -75,7 +75,7 @@
     eyeA: { z: 0.184, y: -0.059 }, // shows on the viewer's left
     eyeB: { z: -0.122, y: -0.054 }, // shows on the viewer's right
     eyeHW: 0.054, eyeHH: 0.073,
-    mouth: { z: 0.028, top: -0.114 }, mouthHW: 0.064,
+    mouth: { z: 0.028, top: -0.112 }, mouthHW: 0.07,
     browY: 0.088, browHW: 0.042
   };
   function cx(z) { return (0.5 - (z - FACE.zc) / FACE.size) * FACE.px; }
@@ -131,28 +131,26 @@
   function drawMouth(ctx, x, top, hw, open, curve, wid, round) {
     var w = hw * wid;
     if (open > 0.06) {
-      var depth = hw * 1.25 * open, corner = top - curve * hw * 0.12;
+      var depth = hw * 1.0 * open, corner = top - curve * hw * 0.18;
       ctx.save();
       ctx.beginPath();
       if (round > 0.5) {
         ctx.ellipse(x, top + depth * 0.55, w * 0.62, depth * 0.62, 0, 0, 2 * PI);
       } else {
         ctx.moveTo(x - w, corner);
-        ctx.quadraticCurveTo(x, top + hw * 0.04, x + w, corner);
-        ctx.bezierCurveTo(x + w * 0.82, top + depth * 1.15, x - w * 0.82, top + depth * 1.15, x - w, corner);
+        ctx.quadraticCurveTo(x, top + hw * 0.12, x + w, corner);
+        ctx.bezierCurveTo(x + w * 0.95, top + depth * 1.3, x - w * 0.95, top + depth * 1.3, x - w, corner);
       }
       ctx.closePath();
-      ctx.fillStyle = '#A9232E'; ctx.fill();
+      var mg = ctx.createLinearGradient(0, top, 0, top + depth * 1.1);
+      mg.addColorStop(0, '#6E1012'); mg.addColorStop(1, '#A8222A');
+      ctx.fillStyle = mg; ctx.fill();
       ctx.clip();
-      ctx.fillStyle = '#F07A82';
-      ctx.beginPath(); ctx.ellipse(x, top + depth * (round > 0.5 ? 1.05 : 1.0), w * 0.58, depth * 0.5, 0, 0, 2 * PI); ctx.fill();
-      if (round < 0.5) {
-        ctx.fillStyle = '#FFFFFF';
-        [-1, 1].forEach(function (s) {
-          var fx = x + s * w * 0.42, fy = top + hw * 0.02;
-          ctx.beginPath(); ctx.moveTo(fx - w * 0.09, fy - 2); ctx.lineTo(fx + w * 0.09, fy - 2); ctx.lineTo(fx, fy + depth * 0.32); ctx.closePath(); ctx.fill();
-        });
-      }
+      // big soft tongue filling the lower half, like the original art
+      var tg = ctx.createRadialGradient(x, top + depth * 1.05, depth * 0.1, x, top + depth * 1.0, w * 0.75);
+      tg.addColorStop(0, '#F59AA0'); tg.addColorStop(1, '#E2646D');
+      ctx.fillStyle = tg;
+      ctx.beginPath(); ctx.ellipse(x, top + depth * (round > 0.5 ? 1.0 : 0.98), w * 0.68, depth * 0.52, 0, 0, 2 * PI); ctx.fill();
       ctx.restore();
     } else {
       ctx.strokeStyle = '#B0303A'; ctx.lineWidth = hw * 0.13; ctx.lineCap = 'round';
