@@ -53,21 +53,33 @@ export const EXPRESSIONS = {
 function drawEye(ctx, x, y, rx, ry, open, smile, side) {
   if (open > 0.14) {
     const h = ry * Math.min(open, 1);
+    // soft shadow where the eye sinks into the face (as in the art)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x - rx * 1.6, y - h - ry * 0.3, rx * 3.2, 2 * h + ry * 0.6); ctx.clip();
+    ctx.shadowColor = 'rgba(176,128,96,0.6)'; ctx.shadowBlur = rx * 0.3; ctx.shadowOffsetY = ry * 0.03;
+    ctx.fillStyle = '#2A1304'; ctx.beginPath(); ctx.ellipse(x, y, rx * 0.98, ry * 0.98, 0, 0, 2 * PI); ctx.fill();
+    ctx.restore();
     ctx.save();
     ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 2 * PI); ctx.clip();
     ctx.beginPath(); ctx.rect(x - rx - 2, y - h, 2 * rx + 4, 2 * h); ctx.clip();
-    ctx.fillStyle = '#341E0C'; ctx.fillRect(x - rx - 2, y - ry - 2, 2 * rx + 4, 2 * ry + 4);
+    ctx.fillStyle = '#2A1304'; ctx.fillRect(x - rx - 2, y - ry - 2, 2 * rx + 4, 2 * ry + 4);
     const g = ctx.createLinearGradient(0, y - ry, 0, y + ry);
-    g.addColorStop(0, '#2B1607'); g.addColorStop(0.45, '#4A2710'); g.addColorStop(0.78, '#A8621C'); g.addColorStop(1, '#D08024');
-    ctx.beginPath(); ctx.ellipse(x, y + ry * 0.04, rx * 0.86, ry * 0.88, 0, 0, 2 * PI); ctx.fillStyle = g; ctx.fill();
-    const pg = ctx.createRadialGradient(x, y - ry * 0.05, 0, x, y - ry * 0.05, rx * 0.55);
-    pg.addColorStop(0, '#190B01'); pg.addColorStop(0.6, 'rgba(25,11,1,0.85)'); pg.addColorStop(1, 'rgba(25,11,1,0)');
-    ctx.fillStyle = pg; ctx.beginPath(); ctx.ellipse(x, y - ry * 0.05, rx * 0.6, ry * 0.6, 0, 0, 2 * PI); ctx.fill();
+    g.addColorStop(0, '#2C1708'); g.addColorStop(0.5, '#3F240C'); g.addColorStop(1, '#5A3210');
+    ctx.beginPath(); ctx.ellipse(x, y + ry * 0.03, rx * 0.88, ry * 0.9, 0, 0, 2 * PI); ctx.fillStyle = g; ctx.fill();
+    // amber glow rising from the bottom of the iris
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(x, y + ry * 0.03, rx * 0.88, ry * 0.9, 0, 0, 2 * PI); ctx.clip();
+    ctx.translate(x, y + ry * 0.78); ctx.scale(rx * 0.95, ry * 0.62);
+    const ag = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    ag.addColorStop(0, 'rgba(240,150,40,1)'); ag.addColorStop(0.35, 'rgba(226,134,34,0.95)'); ag.addColorStop(0.7, 'rgba(150,84,24,0.55)'); ag.addColorStop(1, 'rgba(90,50,16,0)');
+    ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(0, 0, 1, 0, 2 * PI); ctx.fill();
+    ctx.restore();
+    // pupil
+    const pg = ctx.createRadialGradient(x, y - ry * 0.02, 0, x, y - ry * 0.02, rx * 0.5);
+    pg.addColorStop(0, '#160900'); pg.addColorStop(0.78, 'rgba(22,9,0,0.96)'); pg.addColorStop(1, 'rgba(22,9,0,0)');
+    ctx.fillStyle = pg; ctx.beginPath(); ctx.ellipse(x, y - ry * 0.02, rx * 0.5, ry * 0.46, 0, 0, 2 * PI); ctx.fill();
     ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath(); ctx.ellipse(x - rx * 0.24, y - ry * 0.36, rx * 0.33, ry * 0.27, 0.25, 0, 2 * PI); ctx.fill();
-    ctx.globalAlpha = 0.9;
-    ctx.beginPath(); ctx.ellipse(x + rx * 0.3, y + ry * 0.38, rx * 0.1, ry * 0.08, 0, 0, 2 * PI); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.ellipse(x - rx * 0.33, y - ry * 0.5, rx * 0.27, ry * 0.2, -0.5, 0, 2 * PI); ctx.fill();
     ctx.restore();
     if (open < 0.97) {
       ctx.strokeStyle = '#3A2010'; ctx.lineWidth = rx * 0.16; ctx.lineCap = 'round';
@@ -96,7 +108,7 @@ function drawBrow(ctx, x, y, hw, lift, tilt, side) {
   ctx.save();
   ctx.translate(x, y - lift * hw * 0.55);
   ctx.rotate(side * tilt * 0.38);
-  ctx.strokeStyle = '#965420'; ctx.lineWidth = hw * 0.24; ctx.lineCap = 'round';
+  ctx.strokeStyle = '#84481E'; ctx.lineWidth = hw * 0.24; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(-hw * 1.05, hw * 0.22); ctx.quadraticCurveTo(0, -hw * 0.36, hw * 1.05, hw * 0.22); ctx.stroke();
   ctx.restore();
 }
@@ -114,15 +126,16 @@ function drawMouth(ctx, x, top, hw, open, curve, wid, round) {
       mp.closePath();
     }
     const mg = ctx.createLinearGradient(0, top, 0, top + depth * 1.1);
-    mg.addColorStop(0, '#8A3A30'); mg.addColorStop(1, '#B4473F');
+    mg.addColorStop(0, '#6E0204'); mg.addColorStop(0.45, '#8E0A10'); mg.addColorStop(1, '#E2444A');
     ctx.save();
-    ctx.fillStyle = mg; ctx.fill(mp); ctx.clip(mp);
+    ctx.shadowColor = 'rgba(176,128,96,0.55)'; ctx.shadowBlur = hw * 0.16; ctx.shadowOffsetY = hw * 0.02;
+    ctx.fillStyle = mg; ctx.fill(mp); ctx.shadowColor = 'transparent'; ctx.clip(mp);
     const tg = ctx.createRadialGradient(x, top + depth * 1.05, depth * 0.1, x, top + depth, w * 0.75);
-    tg.addColorStop(0, '#FB8E92'); tg.addColorStop(1, '#F06C72');
+    tg.addColorStop(0, '#FF8A8E'); tg.addColorStop(0.75, '#FC7A7E'); tg.addColorStop(1, '#EE5A60');
     ctx.fillStyle = tg;
     ctx.beginPath(); ctx.ellipse(x, top + depth * 0.98, w * 0.68, depth * 0.52, 0, 0, 2 * PI); ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = 'rgba(110,30,24,0.8)'; ctx.lineWidth = Math.max(1.2, hw * 0.035); ctx.lineJoin = 'round'; ctx.stroke(mp);
+    ctx.strokeStyle = 'rgba(104,6,8,0.85)'; ctx.lineWidth = Math.max(1.2, hw * 0.035); ctx.lineJoin = 'round'; ctx.stroke(mp);
   } else {
     ctx.strokeStyle = '#A8262F'; ctx.lineWidth = hw * 0.085; ctx.lineCap = 'round';
     const ey = top + hw * 0.18 - curve * hw * 0.1;
@@ -151,7 +164,7 @@ function skinPatch(ctx, x, y, rx, ry) {
 function drawCheek(ctx, x, y, rx, ry) {
   ctx.save(); ctx.translate(x, y); ctx.scale(rx, ry);
   const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-  g.addColorStop(0, 'rgba(243,138,146,1)'); g.addColorStop(0.6, 'rgba(244,145,152,0.92)'); g.addColorStop(1, 'rgba(246,150,156,0)');
+  g.addColorStop(0, 'rgba(254,176,178,1)'); g.addColorStop(0.8, 'rgba(254,180,180,0.97)'); g.addColorStop(1, 'rgba(254,186,184,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 1, 0, 2 * PI); ctx.fill(); ctx.restore();
 }
 
@@ -415,7 +428,7 @@ export function createNarang(canvas, o = {}) {
   let mode = 'awake', sleepKind = 'sit', moodName = 'awake', seq = null;
   let tiltX = 0, tiltZ = 0, glow = 1, zzzOn = false, faceSig = '', wave = 0, waveT = -1;
   let glowEar = null, glowHeart = null, ready = false, sleeperReady = false, dead = false;
-  const faceUniforms = { faceMap: { value: faceTex }, uRaw: { value: new THREE.Matrix4() }, uRawInv: { value: new THREE.Matrix4() }, uWave: { value: 0 }, uWaveT: { value: 0 } };
+  const faceUniforms = { faceMap: { value: faceTex }, uRaw: { value: new THREE.Matrix4() }, uRawInv: { value: new THREE.Matrix4() }, uWave: { value: 0 }, uWaveT: { value: 0 }, uEdge: { value: new THREE.Vector3(0.22, 0.3, 1) }, uFeat: { value: new THREE.Vector2(0.8, 0.5) }, uEdge2: { value: 0.17 } };
 
   const emit = () => opts.onChange && opts.onChange({ mood: moodName, pose: mode === 'sleep' ? sleepKind : 'awake', busy: !!seq });
   const setExpr = (name) => { if (EXPRESSIONS[name] && exprName !== name) { tgt = EXPRESSIONS[name]; exprName = name; } };
@@ -582,15 +595,31 @@ uniform mat4 uRaw; uniform mat4 uRawInv; uniform float uWave; uniform float uWav
         .replace('#include <common>', `#include <common>
 varying vec3 vRaw;
 varying vec3 vFaceN;
-uniform sampler2D faceMap;`)
+uniform sampler2D faceMap; uniform vec3 uEdge; uniform vec2 uFeat; uniform float uEdge2;`)
         .replace('#include <map_fragment>', `#include <map_fragment>
 float faceGloss = 0.0;
 float coatMask = 0.0;
+float faceFeat = 0.0;
+vec3 faceCol = vec3(0.0);
+if (vRaw.x > 0.1 && vRaw.y > -0.255 && vRaw.y < uEdge2 && abs(vRaw.z - 0.035) < 0.4) {
+  // face skin: the generated texture is blotchy here and fades into the hood through a pale fringe.
+  // Use one clean skin colour and a crisp edge to the yellow instead.
+  vec3 tc = diffuseColor.rgb;
+  float ts = max(max(tc.r, tc.g), tc.b) - min(min(tc.r, tc.g), tc.b);
+  float warm = step(tc.b, tc.g) * step(0.45, tc.g) * step(tc.g, tc.r * 1.01);          // skin .. yellow family only (not pink, green, grey)
+  float notWhite = smoothstep(0.02, 0.05, ts);                 // leave the white headset / mic alone
+  float edge = smoothstep(uEdge.x, uEdge.y, ts);
+  vec3 skinC = vec3(0.955, 0.872, 0.790);
+  diffuseColor.rgb = mix(tc, skinC, warm * notWhite * (1.0 - edge) * uEdge.z);
+}
 {
   vec2 fuv = vec2(0.5 - (vRaw.z - ${FACE.zc.toFixed(3)}) / ${FACE.size.toFixed(3)}, (vRaw.y - (${FACE.yc.toFixed(3)})) / ${FACE.size.toFixed(3)} + 0.5);
   if (vRaw.x > 0.17 && fuv.x > 0.0 && fuv.x < 1.0 && fuv.y > 0.0 && fuv.y < 1.0) {
     vec4 f = texture2D(faceMap, fuv);
     diffuseColor.rgb = mix(diffuseColor.rgb, f.rgb, f.a);
+    // drawn features (eyes, brows, mouth, cheeks) differ from the skin colour; they are kept close to their drawn colour below
+    faceFeat = f.a * smoothstep(0.03, 0.12, distance(f.rgb, vec3(0.939, 0.831, 0.730)));
+    faceCol = f.rgb;
     float fl = dot(f.rgb, vec3(0.3, 0.59, 0.11));
     faceGloss = f.a * (1.0 - smoothstep(0.05, 0.35, fl)) * (1.0 - smoothstep(0.12, 0.22, f.r - f.g));   // glossy eyes only, not the mouth
   }
@@ -600,7 +629,7 @@ float coatMask = 0.0;
     float sat = max(max(dc.r, dc.g), dc.b) - min(min(dc.r, dc.g), dc.b);
     float skin = 1.0 - smoothstep(0.25, 0.4, sat);
     float yel = smoothstep(0.4, 0.7, sat) * smoothstep(0.35, 0.55, dc.g) * step(dc.b, dc.g);   // yellow only, not the pink cheeks
-    diffuseColor.b *= 1.0 + 0.12 * skin - 0.6 * yel;
+    diffuseColor.b *= 1.0 + 0.12 * skin - 0.7 * yel;
     diffuseColor.g *= 1.0 - 0.015 * skin;
   }
   // clear coat only on the headset, the horn logo and the tablet: neutral (low-saturation) colours in those areas
@@ -626,7 +655,18 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
         .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
 #ifdef USE_CLEARCOAT
   material.clearcoat *= coatMask;
-#endif`);
+#endif
+#ifdef USE_SHEEN
+  material.sheenColor *= 1.0 - faceFeat;
+#endif`)
+        .replace('#include <opaque_fragment>', `{
+  // drawn features keep their drawn colour (light only dims them a little), so eyes stay deep and the mouth vivid
+  float lum = clamp(dot(outgoingLight, vec3(0.3, 0.59, 0.11)) / max(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)), 0.02), 0.0, 1.3);
+  vec3 flatC = faceCol * mix(1.0, clamp(lum, 0.75, 1.05), uFeat.y);
+  float hl = smoothstep(0.75, 0.95, min(min(faceCol.r, faceCol.g), faceCol.b));   // white eye highlight stays lit as it is
+  outgoingLight = mix(outgoingLight, flatC, faceFeat * uFeat.x * (1.0 - hl));
+}
+#include <opaque_fragment>`);
     };
     mat.customProgramCacheKey = () => 'narang-seated';
   }
@@ -756,7 +796,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
     /** render now and return a PNG data URL (e.g. to make a poster image) */
     snapshot(type = 'image/png') { const now = performance.now(); last = now - 16; step(now); renderer.render(scene, camera); return canvas.toDataURL(type); },
     /** for tuning only: three objects behind the character */
-    get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, rim, env: envRT }; },
+    get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, rim, env: envRT, faceUniforms }; },
     /** redraw the face after changing FACE_LAYOUT (tuning only) */
     redrawFace() { faceSig = ''; kick(); },
     /**

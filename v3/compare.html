@@ -32,7 +32,7 @@
 </div>
 <p class="note">같은 칸 크기, 같은 정면 각도, 움직임 끈 상태. 숫자는 얼굴 피부 영역(눈·입·볼 제외)과 모자 노란 영역의 평균 RGB입니다.</p>
 <script type="module">
-  import { createNarang } from './narang.js?v=3.6';
+  import { createNarang } from './narang.js?v=3.7';
   const exp = new URLSearchParams(location.search).has('export');
   if (exp) document.body.classList.add('export');
   const S = exp ? 380 / 360 : 1;   // cell scale
@@ -41,7 +41,7 @@
   const go = () => { place('.refA', ...A); place('.refB', ...B); };
   document.querySelectorAll('img').forEach((im) => im.complete ? go() : im.addEventListener('load', go));
 
-  const base = { model: './models/narang_' + (new URLSearchParams(location.search).get('m') || 'full') + '.glb?v=3.6', reducedMotion: true, lookAtPointer: false, dragToRotate: false, tapToJump: false, background: '#ffffff' };
+  const base = { model: './models/narang_' + (new URLSearchParams(location.search).get('m') || 'full') + '.glb?v=3.7', reducedMotion: true, lookAtPointer: false, dragToRotate: false, tapToJump: false, background: '#ffffff' };
   const a = createNarang(document.getElementById('a'), { ...base, mood: 'awake', cameraDistance: 6.2 });
   [4000, 8000, 12000].forEach((ms) => setTimeout(() => measure().catch(() => {}), ms));
   if (!exp) createNarang(document.getElementById('a2'), { ...base, mood: 'awake', cameraDistance: 6.2 });
