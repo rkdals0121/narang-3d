@@ -25,13 +25,15 @@ export function canRender3D() {
 // ---------------------------------------------------------------- face layout
 // Measured on the seated model in its own (glTF) space: +x = front, +y = up, +z = character's right.
 const FACE = { zc: 0.035, yc: -0.06, size: 0.56, px: 512 };
-const F = {
-  eyeA: { z: 0.184, y: -0.059 },          // appears on the viewer's left
-  eyeB: { z: -0.122, y: -0.054 },         // appears on the viewer's right
-  eyeHW: 0.056, eyeHH: 0.075,
-  mouth: { z: 0.028, top: -0.112 }, mouthHW: 0.07,
-  browY: 0.09, browHW: 0.043
+export const FACE_LAYOUT = {
+  eyeA: { z: 0.172, y: -0.057 },          // appears on the viewer's left
+  eyeB: { z: -0.098, y: -0.054 },         // appears on the viewer's right
+  eyeHW: 0.066, eyeHH: 0.087,             // matched to the art: centres within 1px, area within 3%
+  mouth: { z: 0.031, top: -0.1 }, mouthHW: 0.061,   // width = 0.45 x eye spacing, as in the art
+  nose: { z: 0.031, y: -0.074, r: 0.011 },
+  browY: 0.092, browHW: 0.045
 };
+const F = FACE_LAYOUT;
 const HAND = { x: 0.33, y: -0.385, z: 0.19, r: 0.11 };   // the hand on the viewer's left
 const fx = (z) => (0.5 - (z - FACE.zc) / FACE.size) * FACE.px;
 const fy = (y) => (0.5 - (y - FACE.yc) / FACE.size) * FACE.px;
@@ -53,12 +55,12 @@ function drawEye(ctx, x, y, rx, ry, open, smile) {
     ctx.save();
     ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 2 * PI); ctx.clip();
     ctx.beginPath(); ctx.rect(x - rx - 2, y - h, 2 * rx + 4, 2 * h); ctx.clip();
-    ctx.fillStyle = '#1E0F06'; ctx.fillRect(x - rx - 2, y - ry - 2, 2 * rx + 4, 2 * ry + 4);
+    ctx.fillStyle = '#341E0C'; ctx.fillRect(x - rx - 2, y - ry - 2, 2 * rx + 4, 2 * ry + 4);
     const g = ctx.createLinearGradient(0, y - ry, 0, y + ry);
-    g.addColorStop(0, '#2A1407'); g.addColorStop(0.5, '#3E200C'); g.addColorStop(0.82, '#9A5A22'); g.addColorStop(1, '#C98238');
+    g.addColorStop(0, '#2B1607'); g.addColorStop(0.45, '#4A2710'); g.addColorStop(0.78, '#A8621C'); g.addColorStop(1, '#D08024');
     ctx.beginPath(); ctx.ellipse(x, y + ry * 0.04, rx * 0.86, ry * 0.88, 0, 0, 2 * PI); ctx.fillStyle = g; ctx.fill();
     const pg = ctx.createRadialGradient(x, y - ry * 0.05, 0, x, y - ry * 0.05, rx * 0.55);
-    pg.addColorStop(0, '#0D0501'); pg.addColorStop(0.6, 'rgba(13,5,1,0.85)'); pg.addColorStop(1, 'rgba(13,5,1,0)');
+    pg.addColorStop(0, '#190B01'); pg.addColorStop(0.6, 'rgba(25,11,1,0.85)'); pg.addColorStop(1, 'rgba(25,11,1,0)');
     ctx.fillStyle = pg; ctx.beginPath(); ctx.ellipse(x, y - ry * 0.05, rx * 0.6, ry * 0.6, 0, 0, 2 * PI); ctx.fill();
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath(); ctx.ellipse(x - rx * 0.24, y - ry * 0.36, rx * 0.33, ry * 0.27, 0.25, 0, 2 * PI); ctx.fill();
@@ -83,7 +85,7 @@ function drawBrow(ctx, x, y, hw, lift, tilt, side) {
   ctx.save();
   ctx.translate(x, y - lift * hw * 0.55);
   ctx.rotate(side * tilt * 0.38);
-  ctx.strokeStyle = '#6B3A1C'; ctx.lineWidth = hw * 0.26; ctx.lineCap = 'round';
+  ctx.strokeStyle = '#965420'; ctx.lineWidth = hw * 0.24; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(-hw * 1.05, hw * 0.22); ctx.quadraticCurveTo(0, -hw * 0.36, hw * 1.05, hw * 0.22); ctx.stroke();
   ctx.restore();
 }
@@ -92,32 +94,57 @@ function drawMouth(ctx, x, top, hw, open, curve, wid, round) {
   const w = hw * wid;
   if (open > 0.06) {
     const depth = hw * 1.3 * open, corner = top - curve * hw * 0.18;
-    ctx.save();
-    ctx.beginPath();
-    if (round > 0.5) ctx.ellipse(x, top + depth * 0.55, w * 0.62, depth * 0.62, 0, 0, 2 * PI);
+    const mp = new Path2D();
+    if (round > 0.5) mp.ellipse(x, top + depth * 0.55, w * 0.62, depth * 0.62, 0, 0, 2 * PI);
     else {
-      ctx.moveTo(x - w, corner);
-      ctx.quadraticCurveTo(x, top + hw * 0.12, x + w, corner);
-      ctx.bezierCurveTo(x + w * 0.95, top + depth * 1.3, x - w * 0.95, top + depth * 1.3, x - w, corner);
+      mp.moveTo(x - w, corner);
+      mp.quadraticCurveTo(x, top + hw * 0.12, x + w, corner);
+      mp.bezierCurveTo(x + w * 0.95, top + depth * 1.3, x - w * 0.95, top + depth * 1.3, x - w, corner);
+      mp.closePath();
     }
-    ctx.closePath();
     const mg = ctx.createLinearGradient(0, top, 0, top + depth * 1.1);
-    mg.addColorStop(0, '#6E1012'); mg.addColorStop(1, '#A8222A');
-    ctx.fillStyle = mg; ctx.fill(); ctx.clip();
+    mg.addColorStop(0, '#8A3A30'); mg.addColorStop(1, '#B4473F');
+    ctx.save();
+    ctx.fillStyle = mg; ctx.fill(mp); ctx.clip(mp);
     const tg = ctx.createRadialGradient(x, top + depth * 1.05, depth * 0.1, x, top + depth, w * 0.75);
-    tg.addColorStop(0, '#F59AA0'); tg.addColorStop(1, '#E2646D');
+    tg.addColorStop(0, '#FB8E92'); tg.addColorStop(1, '#F06C72');
     ctx.fillStyle = tg;
     ctx.beginPath(); ctx.ellipse(x, top + depth * 0.98, w * 0.68, depth * 0.52, 0, 0, 2 * PI); ctx.fill();
     ctx.restore();
+    ctx.strokeStyle = 'rgba(110,30,24,0.8)'; ctx.lineWidth = Math.max(1.2, hw * 0.035); ctx.lineJoin = 'round'; ctx.stroke(mp);
   } else {
-    ctx.strokeStyle = '#B0303A'; ctx.lineWidth = hw * 0.12; ctx.lineCap = 'round';
+    ctx.strokeStyle = '#A8262F'; ctx.lineWidth = hw * 0.085; ctx.lineCap = 'round';
     const ey = top + hw * 0.18 - curve * hw * 0.1;
     ctx.beginPath(); ctx.moveTo(x - w * 0.75, ey); ctx.quadraticCurveTo(x, ey + curve * hw * 0.55, x + w * 0.75, ey); ctx.stroke();
   }
 }
 
+function drawNose(ctx, x, y, r) {
+  const sh = ctx.createRadialGradient(x, y + r * 0.9, 0, x, y + r * 0.9, r * 1.8);
+  sh.addColorStop(0, 'rgba(196,150,120,0.35)'); sh.addColorStop(1, 'rgba(196,150,120,0)');
+  ctx.fillStyle = sh; ctx.beginPath(); ctx.ellipse(x, y + r * 0.9, r * 1.8, r * 1.1, 0, 0, 2 * PI); ctx.fill();
+  const hl = ctx.createRadialGradient(x - r * 0.25, y - r * 0.3, 0, x, y, r * 1.1);
+  hl.addColorStop(0, 'rgba(255,255,255,0.95)'); hl.addColorStop(0.6, 'rgba(255,250,245,0.6)'); hl.addColorStop(1, 'rgba(255,250,245,0)');
+  ctx.fillStyle = hl; ctx.beginPath(); ctx.ellipse(x, y, r * 1.2, r, 0, 0, 2 * PI); ctx.fill();
+}
+
+// feathered skin-colour patches over where the model's own eyes/brows/mouth were erased,
+// so no seams or leftover specks show through (mostly visible when the eyes are closed)
+function skinPatch(ctx, x, y, rx, ry) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(rx, ry);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  g.addColorStop(0, 'rgba(248,235,222,1)'); g.addColorStop(0.7, 'rgba(248,235,222,0.9)'); g.addColorStop(1, 'rgba(248,235,222,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 1, 0, 2 * PI); ctx.fill(); ctx.restore();
+}
+
 function drawFace(ctx, p, eyeMul) {
   ctx.clearRect(0, 0, FACE.px, FACE.px);
+  for (const e of [F.eyeA, F.eyeB]) {
+    skinPatch(ctx, fx(e.z), fy(e.y), fl(F.eyeHW) * 1.35, fl(F.eyeHH) * 1.25);
+    skinPatch(ctx, fx(e.z), fy(F.browY + 0.02), fl(F.browHW) * 1.8, fl(0.05));
+  }
+  skinPatch(ctx, fx(F.mouth.z), fy(F.mouth.top - 0.03), fl(F.mouthHW) * 1.5, fl(0.05));
+  drawNose(ctx, fx(F.nose.z), fy(F.nose.y), fl(F.nose.r));
   const rx = fl(F.eyeHW) * p.sz, ry = fl(F.eyeHH) * p.sz;
   drawBrow(ctx, fx(F.eyeA.z), fy(F.browY), fl(F.browHW), p.bl, p.bt, -1);
   drawBrow(ctx, fx(F.eyeB.z), fy(F.browY), fl(F.browHW), p.bl, p.bt, 1);
@@ -219,8 +246,13 @@ export function createNarang(canvas, o = {}) {
   const envRT = makeEnvironment(renderer);
   scene.environment = envRT.texture;
   const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 100);
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xd8cbb0, 0.35); scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff6e8, 1.25); key.position.set(2, 4, 5); scene.add(key);
+  // key light from the upper left like the illustration, soft fill from the right, little flat ambient
+  // Values fitted against the illustration's face / hood colours (see compare.html).
+  // Note: in three r16x+ the scene environment is scaled by scene.environmentIntensity, not material.envMapIntensity.
+  scene.environmentIntensity = 0.9;
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xcdbfa8, 0.1); scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(-3, 5, 4); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.25); fill.position.set(4, 0.5, 3); scene.add(fill);
 
   const root = new THREE.Group(); scene.add(root);       // yaw (drag / view)
   const look = new THREE.Group(); root.add(look);        // small turn toward the pointer
@@ -289,7 +321,7 @@ export function createNarang(canvas, o = {}) {
   }
 
   // ---------------------------------------------------------------- input
-  let yaw = 0, tYaw = 0, pitch = 0.1, tPitch = 0.1, dist = 7.4, tDist = 7.4, auto = false, zoomed = !!opts.cameraDistance, camY = opts.cameraTargetY || 0;
+  let yaw = 0, tYaw = 0, pitch = 0.1, tPitch = 0.1, dist = 6.5, tDist = 6.5, auto = false, zoomed = !!opts.cameraDistance, camY = opts.cameraTargetY || 0;
   if (opts.cameraDistance) { dist = tDist = opts.cameraDistance; }
   let lookX = 0, lookY = 0, tLookX = 0, tLookY = 0, lastPointer = 0;
   const pts = new Map(); let pinch = 0, drag = false, px = 0, py = 0, downAt = 0, moved = 0;
@@ -337,7 +369,7 @@ export function createNarang(canvas, o = {}) {
   function resize() {
     const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-    if (!zoomed) { tDist = Math.max(7.4, 6.6 / camera.aspect); dist = tDist; }
+    if (!zoomed) { tDist = Math.max(6.5, 5.9 / camera.aspect); dist = tDist; }   // fill the box, leave headroom for the jump
   }
   const ro = new ResizeObserver(resize); ro.observe(host); resize();
 
@@ -518,7 +550,16 @@ float coatMask = 0.0;
     vec4 f = texture2D(faceMap, fuv);
     diffuseColor.rgb = mix(diffuseColor.rgb, f.rgb, f.a);
     float fl = dot(f.rgb, vec3(0.3, 0.59, 0.11));
-    faceGloss = f.a * (1.0 - smoothstep(0.05, 0.35, fl));
+    faceGloss = f.a * (1.0 - smoothstep(0.05, 0.35, fl)) * (1.0 - smoothstep(0.12, 0.22, f.r - f.g));   // glossy eyes only, not the mouth
+  }
+  // colour grade (after the face so drawn skin and model skin match): skin a touch less yellow, mascot yellow deeper
+  {
+    vec3 dc = diffuseColor.rgb;
+    float sat = max(max(dc.r, dc.g), dc.b) - min(min(dc.r, dc.g), dc.b);
+    float skin = 1.0 - smoothstep(0.25, 0.4, sat);
+    float yel = smoothstep(0.4, 0.7, sat) * smoothstep(0.35, 0.55, dc.g) * step(dc.b, dc.g);   // yellow only, not the pink cheeks
+    diffuseColor.b *= 1.0 + 0.12 * skin - 0.6 * yel;
+    diffuseColor.g *= 1.0 - 0.04 * skin;
   }
   // clear coat only on the headset, the horn logo and the tablet: neutral (low-saturation) colours in those areas
   vec3 dc = diffuseColor.rgb;
@@ -546,7 +587,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
   function physical(src, extra) {
     return own(new THREE.MeshPhysicalMaterial(Object.assign({
       map: src.map || null, normalMap: src.normalMap || null, roughnessMap: src.roughnessMap || null,
-      normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.85, metalness: 0, envMapIntensity: 0.42,
+      normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.85, metalness: 0, envMapIntensity: 0.3,
       sheen: 0.25, sheenRoughness: 0.45, sheenColor: new THREE.Color('#fff3e6')
     }, extra)));
   }
@@ -662,7 +703,9 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
     /** render now and return a PNG data URL (e.g. to make a poster image) */
     snapshot(type = 'image/png') { renderer.render(scene, camera); return canvas.toDataURL(type); },
     /** for tuning only: three objects behind the character */
-    get debug() { return { THREE, renderer, scene, camera, hemi, key, env: envRT }; },
+    get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, env: envRT }; },
+    /** redraw the face after changing FACE_LAYOUT (tuning only) */
+    redrawFace() { faceSig = ''; kick(); },
     /**
      * Free everything. The same canvas can be passed to createNarang() again afterwards
      * (React StrictMode mounts twice). Pass { releaseContext: true } only when the canvas

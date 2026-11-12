@@ -9,28 +9,67 @@
 </script>
 <style>
   body { margin: 0; background: #fff; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; color: #2B2318; }
-  .grid { display: grid; grid-template-columns: 420px 420px; gap: 16px; padding: 16px; width: max-content; }
-  .cell { position: relative; width: 420px; height: 420px; overflow: hidden; background: #fff; border: 1px solid #eee; }
+  .grid { display: grid; grid-template-columns: repeat(3, 360px); gap: 14px; padding: 14px; width: max-content; }
+  body.export .grid { grid-template-columns: repeat(2, 380px); gap: 12px; padding: 12px; }
+  body.export .ov { display: none; }
+  .cell { position: relative; width: 360px; height: 360px; overflow: hidden; background: #fff; border: 1px solid #eee; }
+  body.export .cell { width: 380px; height: 380px; }
   .cell img { position: absolute; }
-  canvas { display: block; width: 100%; height: 100%; }
-  h2 { margin: 0 0 6px; font-size: 15px; }
+  .cell canvas { display: block; width: 100%; height: 100%; }
+  .over { opacity: 0.5; pointer-events: none; }
+  h2 { margin: 0 0 4px; font-size: 14px; }
+  .rgb { margin: 4px 0 0; font-size: 12px; color: #5E4E30; font-variant-numeric: tabular-nums; }
+  p.note { margin: 0 14px 14px; font-size: 12px; color: #5E4E30; max-width: 760px; }
 </style>
 </head>
 <body>
 <div class="grid">
-  <div><h2>원본 그림 (나랑이.png 정면)</h2><div class="cell"><img id="o1" src="./ref/front.png" alt="원본 정면" style="left:0;top:0;width:420px;height:420px"></div></div>
-  <div><h2>3D v3 (웃음)</h2><div class="cell"><canvas id="a"></canvas></div></div>
-  <div><h2>원본 얼굴 확대</h2><div class="cell"><img id="o2" src="./ref/front.png" alt="원본 얼굴 확대"></div></div>
-  <div><h2>3D v3 얼굴 확대</h2><div class="cell"><canvas id="b"></canvas></div></div>
+  <div><h2>원본 · 웃음</h2><div class="cell"><img class="refA" src="./ref/front.png" alt="원본 정면"></div><p class="rgb" id="rgbA"></p></div>
+  <div><h2>3D v3.1 · 웃음</h2><div class="cell"><canvas id="a"></canvas></div><p class="rgb" id="rgbA3"></p></div>
+  <div class="ov"><h2>겹쳐 보기 (원본 50%)</h2><div class="cell"><canvas id="a2"></canvas><img class="refA over" src="./ref/front.png" alt=""></div></div>
+  <div><h2>원본 · 잠든 얼굴</h2><div class="cell"><img class="refB" src="./ref/sleep.png" alt="원본 잠든 모습"></div><p class="rgb" id="rgbB"></p></div>
+  <div><h2>3D v3.1 · 잠든 얼굴 (자기 1)</h2><div class="cell"><canvas id="b"></canvas></div><p class="rgb" id="rgbB3"></p></div>
 </div>
+<p class="note">같은 칸 크기, 같은 정면 각도, 움직임 끈 상태. 숫자는 얼굴 피부 영역(눈·입·볼 제외)과 모자 노란 영역의 평균 RGB입니다.</p>
 <script type="module">
-  import { createNarang } from './narang.js';
-  const common = { model: './models/narang_full.glb', mood: 'awake', reducedMotion: true, lookAtPointer: false, dragToRotate: false, tapToJump: false, background: '#ffffff' };
-  // face crop of the reference: same framing as the zoomed 3D view below
-  const o2 = document.getElementById('o2');
-  o2.style.width = '1000px'; o2.style.height = '1000px'; o2.style.left = '-290px'; o2.style.top = '-300px';
-  window.a = createNarang(document.getElementById('a'), Object.assign({ cameraDistance: 8.2, cameraTargetY: 0.05 }, common));
-  window.b = createNarang(document.getElementById('b'), Object.assign({ cameraDistance: 3.4, cameraTargetY: 0.25 }, common));
+  import { createNarang } from './narang.js?v=3.1';
+  const exp = new URLSearchParams(location.search).has('export');
+  if (exp) document.body.classList.add('export');
+  const S = exp ? 380 / 360 : 1;   // cell scale
+  const place = (sel, scale, x, y) => document.querySelectorAll(sel).forEach((im) => { im.style.width = im.naturalWidth * scale * S + 'px'; im.style.left = x * S + 'px'; im.style.top = y * S + 'px'; });
+  const A = [0.375, -18, -6], B = [0.62, -250, -205];
+  const go = () => { place('.refA', ...A); place('.refB', ...B); };
+  document.querySelectorAll('img').forEach((im) => im.complete ? go() : im.addEventListener('load', go));
+
+  const base = { model: './models/narang_full.glb', reducedMotion: true, lookAtPointer: false, dragToRotate: false, tapToJump: false, background: '#ffffff' };
+  const a = createNarang(document.getElementById('a'), { ...base, mood: 'awake', cameraDistance: 6.2 });
+  [4000, 8000, 12000].forEach((ms) => setTimeout(() => measure().catch(() => {}), ms));
+  if (!exp) createNarang(document.getElementById('a2'), { ...base, mood: 'awake', cameraDistance: 6.2 });
+  const b = createNarang(document.getElementById('b'), { ...base, mood: 'sleep', sleepPose: 'sit', cameraDistance: 4.1, cameraTargetY: -0.42 });
+  window.a = a; window.b = b;
+
+  async function pixels(src, draw) {
+    const c = document.createElement('canvas'); c.width = c.height = 360; const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, 360, 360);
+    if (src) { const im = new Image(); im.src = src; await im.decode(); x.drawImage(im, 0, 0, 360, 360); } else draw(x);
+    return x.getImageData(0, 0, 360, 360).data;
+  }
+  async function refPixels(url, [s, ox, oy]) { const im = new Image(); im.src = url; await im.decode(); return pixels(null, (x) => x.drawImage(im, ox, oy, im.naturalWidth * s, im.naturalHeight * s)); }
+  function mean(d, x0, y0, x1, y1, f) { let s = [0, 0, 0], n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * 360 + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2]; if (f(r, g, b)) { s[0] += r; s[1] += g; s[2] += b; n++; } } return n ? s.map((v) => Math.round(v / n)) : null; }
+  const skin = (r, g, b) => r > 170 && g > 150 && b > 130 && (r - b) < 55 && (r - g) < 35;
+  const yel = (r, g, b) => r > 170 && g > 110 && b < 150 && (r - b) > 70;
+  const fmt = (v) => v ? v.join(', ') : '-';
+  async function measure() {
+    const o = await refPixels('./ref/front.png', A), d3 = await pixels(a.snapshot());
+    const ob = await refPixels('./ref/sleep.png', B), db = await pixels(b.snapshot());
+    const row = (d) => `얼굴 ${fmt(mean(d, 90, 150, 235, 265, skin))} · 모자 ${fmt(mean(d, 100, 40, 230, 110, yel))}`;
+    const rowB = (d) => `얼굴 ${fmt(mean(d, 40, 60, 320, 320, skin))}`;
+    document.getElementById('rgbA').textContent = row(o);
+    document.getElementById('rgbA3').textContent = row(d3);
+    document.getElementById('rgbB').textContent = rowB(ob);
+    document.getElementById('rgbB3').textContent = rowB(db);
+  }
+  window.measure = measure;
 </script>
 </body>
 </html>
