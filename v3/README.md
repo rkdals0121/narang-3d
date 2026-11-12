@@ -9,7 +9,7 @@
 
 | 파일 | 내용 | 크기 |
 |---|---|---|
-| `narang.js` | 뷰어 모듈 (`createNarang`, `canRender3D`, `EXPRESSIONS`) | 약 30KB |
+| `narang.js` | 뷰어 모듈 (`createNarang`, `canRender3D`, `EXPRESSIONS`) | 38KB |
 | `models/narang_lite.glb` | 앉은 모델 경량판: 삼각형 10만, 텍스처 1024 WebP, meshopt | 1.02MB |
 | `models/narang_full.glb` | 앉은 모델 고화질판: 삼각형 37만, 텍스처 2048 WebP, meshopt | 3.12MB |
 | `models/sleep.glb` | 엎드린 모델: 삼각형 1.6만, WebP, meshopt | 0.18MB |
