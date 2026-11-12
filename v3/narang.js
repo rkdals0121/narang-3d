@@ -28,11 +28,11 @@ const FACE = { zc: 0.035, yc: -0.06, size: 0.56, px: 512 };
 export const FACE_LAYOUT = {
   eyeA: { z: 0.172, y: -0.057 },          // appears on the viewer's left
   eyeB: { z: -0.098, y: -0.054 },         // appears on the viewer's right
-  eyeHW: 0.066, eyeHH: 0.087,             // matched to the art: centres within 1px, area within 3%
-  mouth: { z: 0.031, top: -0.1 }, mouthHW: 0.061,   // width = 0.45 x eye spacing, as in the art
+  eyeHW: 0.052, eyeHH: 0.068,             // measured against the hero art at the same framing (v3.8: was 0.066 x 0.087, too big)
+  mouth: { z: 0.031, top: -0.1 }, mouthHW: 0.054,   // width = 0.45 x eye spacing, as in the art
   nose: { z: 0.031, y: -0.074, r: 0.011 },
   cheekA: { z: 0.252, y: -0.148 }, cheekB: { z: -0.198, y: -0.13 }, cheekRZ: 0.055, cheekRY: 0.044,   // drawn, no longer baked in the texture
-  browY: 0.092, browHW: 0.045
+  browY: 0.092, browHW: 0.035
 };
 const F = FACE_LAYOUT;
 const HAND = { x: 0.33, y: -0.385, z: 0.19, r: 0.11 };   // the hand on the viewer's left
@@ -91,6 +91,7 @@ function drawEye(ctx, x, y, rx, ry, open, smile, side) {
       ctx.strokeStyle = '#3A2010'; ctx.lineWidth = rx * 0.22; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(x - rx * 0.95, y + ry * 0.18); ctx.quadraticCurveTo(x, y - ry * 0.55, x + rx * 0.95, y + ry * 0.18); ctx.stroke();
     } else {            // sleeping eye: thin crescent bowed downward, tapered ends, outer end slightly raised (as in the art)
+      rx *= 1.27; ry *= 1.28;   // the sleeping crescents keep the width measured on the sleeping art
       const w = rx * 1.08, lift = ry * 0.16, cy0 = y + ry * 0.05;
       const lx = x - w, rxx = x + w, ly = cy0 - (side < 0 ? lift : 0), ry2 = cy0 - (side > 0 ? lift : 0);
       const g = ctx.createLinearGradient(0, cy0, 0, cy0 + ry * 0.6);
@@ -171,10 +172,10 @@ function drawCheek(ctx, x, y, rx, ry) {
 function drawFace(ctx, p, eyeMul) {
   ctx.clearRect(0, 0, FACE.px, FACE.px);
   for (const e of [F.eyeA, F.eyeB]) {
-    skinPatch(ctx, fx(e.z), fy(e.y), fl(F.eyeHW) * 1.7, fl(F.eyeHH) * 1.4);
-    skinPatch(ctx, fx(e.z), fy(F.browY + 0.02), fl(F.browHW) * 1.8, fl(0.05));
+    skinPatch(ctx, fx(e.z), fy(e.y), fl(0.066) * 1.7, fl(0.087) * 1.4);
+    skinPatch(ctx, fx(e.z), fy(F.browY + 0.02), fl(0.045) * 1.8, fl(0.05));
   }
-  skinPatch(ctx, fx(F.mouth.z), fy(F.mouth.top - 0.03), fl(F.mouthHW) * 1.5, fl(0.05));
+  skinPatch(ctx, fx(F.mouth.z), fy(F.mouth.top - 0.03), fl(0.061) * 1.5, fl(0.05));
   skinPatch(ctx, fx(0.035), fy(-0.06), fl(0.06), fl(0.07));   // bridge between the eyes
   drawNose(ctx, fx(F.nose.z), fy(F.nose.y), fl(F.nose.r));
   // cheeks sit a little lower and further out when asleep, as in the sleeping art
@@ -258,6 +259,7 @@ const backOut = (t) => { const c1 = 1.9; t -= 1; return t * t * ((c1 + 1) * t + 
  * @param {boolean} [o.tapToJump=true]
  * @param {string|null} [o.background=null]  null = transparent
  * @param {number} [o.maxPixelRatio=2]
+ * @param {boolean} [o.shadows=true]  real shadow map from the key light (the hood shades the face); false = cheaper
  * @param {(api) => void} [o.onReady]
  * @param {(err) => void} [o.onError]
  * @param {(state: {mood, pose, busy}) => void} [o.onChange]
@@ -265,7 +267,7 @@ const backOut = (t) => { const c1 = 1.9; t -= 1; return t * t * ((c1 + 1) * t + 
 export function createNarang(canvas, o = {}) {
   const opts = Object.assign({
     mood: 'awake', sleepPose: 'sit', lookAtPointer: true, dragToRotate: true, tapToJump: true,
-    background: null, maxPixelRatio: 2,
+    background: null, maxPixelRatio: 2, shadows: true,
     reducedMotion: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   }, o);
   const host = canvas.parentElement || canvas;
@@ -286,8 +288,17 @@ export function createNarang(canvas, o = {}) {
   // Values fitted against the illustration's face / hood colours (see compare.html).
   // Note: in three r16x+ the scene environment is scaled by scene.environmentIntensity, not material.envMapIntensity.
   scene.environmentIntensity = 0.9;
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xcdbfa8, 0.1); scene.add(hemi);
+  const hemi = new THREE.HemisphereLight(0xffe4d0, 0xcdbfa8, 0.14); scene.add(hemi);   // warm, so shadowed skin turns peach rather than grey
   const key = new THREE.DirectionalLight(0xffffff, 1.05); key.position.set(-2, 6.5, 3.5); scene.add(key);   // higher: forehead light, chin a little darker, as in the art
+  if (opts.shadows) {
+    // the hood casts a soft shadow on the forehead and the head on the body, as in the art
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+    key.castShadow = true;
+    const sc = key.shadow.camera; sc.left = -2.2; sc.right = 2.2; sc.top = 2.2; sc.bottom = -2.2; sc.near = 1; sc.far = 16; sc.updateProjectionMatrix();
+    key.shadow.mapSize.set(1024, 1024); key.shadow.radius = 5;
+    key.shadow.normalBias = 0.04; key.shadow.bias = -0.0005;   // no acne on the bumpy generated surface
+    key.shadow.intensity = 0.65;
+  }
   const fill = new THREE.DirectionalLight(0xffffff, 0.2); fill.position.set(4, 0.5, 3); scene.add(fill);
   const rim = new THREE.DirectionalLight(0xfff6e0, 0.7); rim.position.set(1.5, 3, -5); scene.add(rim);   // soft-vinyl edge light (tuned below)
 
@@ -695,7 +706,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
       const old = m.material;
       const mat = physical(old, { clearcoat: 1, clearcoatRoughness: 0.12 });
       old.dispose();
-      m.material = mat;
+      m.material = mat; m.castShadow = m.receiveShadow = !!opts.shadows;
       // model-space matrix of this mesh (includes KHR_mesh_quantization dequantisation)
       patchSeated(mat, m.matrixWorld);
     });
@@ -717,7 +728,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
       g2.scene.traverse((m) => {
         if (!m.isMesh) return;
         if (!m.geometry.attributes.normal) smoothNormals(m.geometry);
-        const old = m.material; m.material = physical(old); old.dispose();
+        const old = m.material; m.material = physical(old); old.dispose(); m.castShadow = m.receiveShadow = !!opts.shadows;
       });
       const h = new THREE.Group(); h.add(g2.scene); h.updateMatrixWorld(true);
       const b2 = new THREE.Box3().setFromObject(h), sz = b2.getSize(new THREE.Vector3()), c2 = b2.getCenter(new THREE.Vector3());
