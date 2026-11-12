@@ -31,6 +31,7 @@ export const FACE_LAYOUT = {
   eyeHW: 0.066, eyeHH: 0.087,             // matched to the art: centres within 1px, area within 3%
   mouth: { z: 0.031, top: -0.1 }, mouthHW: 0.061,   // width = 0.45 x eye spacing, as in the art
   nose: { z: 0.031, y: -0.074, r: 0.011 },
+  cheekA: { z: 0.252, y: -0.148 }, cheekB: { z: -0.198, y: -0.13 }, cheekRZ: 0.055, cheekRY: 0.044,   // drawn, no longer baked in the texture
   browY: 0.092, browHW: 0.045
 };
 const F = FACE_LAYOUT;
@@ -49,7 +50,7 @@ export const EXPRESSIONS = {
 };
 
 // Eye drawn after the original art: dark rim, warm amber lower half, big soft highlight.
-function drawEye(ctx, x, y, rx, ry, open, smile) {
+function drawEye(ctx, x, y, rx, ry, open, smile, side) {
   if (open > 0.14) {
     const h = ry * Math.min(open, 1);
     ctx.save();
@@ -74,10 +75,20 @@ function drawEye(ctx, x, y, rx, ry, open, smile) {
       ctx.beginPath(); ctx.moveTo(x - rx * 0.92, ly + ry * 0.05); ctx.quadraticCurveTo(x, ly - ry * 0.08, x + rx * 0.92, ly + ry * 0.05); ctx.stroke();
     }
   } else {
-    ctx.strokeStyle = '#3A2010'; ctx.lineWidth = rx * 0.24; ctx.lineCap = 'round';
-    const up = smile >= 0;
-    const ends = up ? y + ry * 0.18 : y - ry * 0.02, ctrl = up ? y - ry * 0.55 : y + ry * 0.5;
-    ctx.beginPath(); ctx.moveTo(x - rx * 0.95, ends); ctx.quadraticCurveTo(x, ctrl, x + rx * 0.95, ends); ctx.stroke();
+    if (smile >= 0) {   // happy closed eye: ^
+      ctx.strokeStyle = '#3A2010'; ctx.lineWidth = rx * 0.22; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x - rx * 0.95, y + ry * 0.18); ctx.quadraticCurveTo(x, y - ry * 0.55, x + rx * 0.95, y + ry * 0.18); ctx.stroke();
+    } else {            // sleeping eye: thin crescent bowed downward, tapered ends, outer end slightly raised (as in the art)
+      const w = rx * 1.08, lift = ry * 0.16, cy0 = y + ry * 0.05;
+      const lx = x - w, rxx = x + w, ly = cy0 - (side < 0 ? lift : 0), ry2 = cy0 - (side > 0 ? lift : 0);
+      const g = ctx.createLinearGradient(0, cy0, 0, cy0 + ry * 0.6);
+      g.addColorStop(0, '#2E1608'); g.addColorStop(1, '#5A2E14');
+      ctx.fillStyle = g; ctx.strokeStyle = '#3A1D0E'; ctx.lineWidth = Math.max(1, rx * 0.04); ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(lx, ly);
+      ctx.quadraticCurveTo(x, cy0 + ry * 0.44, rxx, ry2);
+      ctx.quadraticCurveTo(x, cy0 + ry * 0.7, lx, ly);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
   }
 }
 
@@ -137,6 +148,13 @@ function skinPatch(ctx, x, y, rx, ry) {
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 1, 0, 2 * PI); ctx.fill(); ctx.restore();
 }
 
+function drawCheek(ctx, x, y, rx, ry) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(rx, ry);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  g.addColorStop(0, 'rgba(243,138,146,1)'); g.addColorStop(0.6, 'rgba(244,145,152,0.92)'); g.addColorStop(1, 'rgba(246,150,156,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 1, 0, 2 * PI); ctx.fill(); ctx.restore();
+}
+
 function drawFace(ctx, p, eyeMul) {
   ctx.clearRect(0, 0, FACE.px, FACE.px);
   for (const e of [F.eyeA, F.eyeB]) {
@@ -145,11 +163,15 @@ function drawFace(ctx, p, eyeMul) {
   }
   skinPatch(ctx, fx(F.mouth.z), fy(F.mouth.top - 0.03), fl(F.mouthHW) * 1.5, fl(0.05));
   drawNose(ctx, fx(F.nose.z), fy(F.nose.y), fl(F.nose.r));
+  // cheeks sit a little lower and further out when asleep, as in the sleeping art
+  const zz = Math.max(0, -p.sm);
+  drawCheek(ctx, fx(F.cheekA.z + 0.014 * zz), fy(F.cheekA.y - 0.022 * zz), fl(F.cheekRZ), fl(F.cheekRY));
+  drawCheek(ctx, fx(F.cheekB.z - 0.014 * zz), fy(F.cheekB.y - 0.022 * zz), fl(F.cheekRZ), fl(F.cheekRY));
   const rx = fl(F.eyeHW) * p.sz, ry = fl(F.eyeHH) * p.sz;
   drawBrow(ctx, fx(F.eyeA.z), fy(F.browY), fl(F.browHW), p.bl, p.bt, -1);
   drawBrow(ctx, fx(F.eyeB.z), fy(F.browY), fl(F.browHW), p.bl, p.bt, 1);
-  drawEye(ctx, fx(F.eyeA.z), fy(F.eyeA.y), rx, ry, p.eA * eyeMul, p.sm);
-  drawEye(ctx, fx(F.eyeB.z), fy(F.eyeB.y), rx, ry, p.eB * eyeMul, p.sm);
+  drawEye(ctx, fx(F.eyeA.z), fy(F.eyeA.y), rx, ry, p.eA * eyeMul, p.sm, -1);
+  drawEye(ctx, fx(F.eyeB.z), fy(F.eyeB.y), rx, ry, p.eB * eyeMul, p.sm, 1);
   drawMouth(ctx, fx(F.mouth.z), fy(F.mouth.top), fl(F.mouthHW), p.mo, p.cu, p.mw, p.rd);
 }
 
@@ -366,12 +388,17 @@ export function createNarang(canvas, o = {}) {
   canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
+  function placeCamera() {
+    camera.position.set(0, camY + dist * Math.sin(pitch), dist * Math.cos(pitch));
+    camera.lookAt(0, camY, 0);
+  }
+
   function resize() {
     const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
     if (!zoomed) { tDist = Math.max(6.5, 5.9 / camera.aspect); dist = tDist; }   // fill the box, leave headroom for the jump
   }
-  const ro = new ResizeObserver(resize); ro.observe(host); resize();
+  const ro = new ResizeObserver(resize); ro.observe(host); resize(); placeCamera();
 
   // pause when off screen / tab hidden
   let onScreen = true;
@@ -397,6 +424,13 @@ export function createNarang(canvas, o = {}) {
   function frame(now) {
     raf = 0;
     if (dead || !onScreen || document.hidden) return;
+    step(now);
+    renderer.render(scene, camera);
+    raf = requestAnimationFrame(frame);
+  }
+
+  // advance all animation state by one frame (also used by snapshot() while the loop is paused)
+  function step(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     const t = now / 1000, rm = opts.reducedMotion;
 
@@ -408,8 +442,7 @@ export function createNarang(canvas, o = {}) {
     root.rotation.y = yaw;
     const sleepingNow = mode === 'sleep';
     look.rotation.set(sleepingNow || rm ? 0 : lookY, sleepingNow || rm ? 0 : lookX, 0);
-    camera.position.set(0, camY + dist * Math.sin(pitch), dist * Math.cos(pitch));
-    camera.lookAt(0, camY, 0);
+    placeCamera();
 
     // body
     const sleeping = mode === 'sleep', lying = sleeping && sleepKind === 'lie' && sleeperReady;
@@ -506,9 +539,6 @@ export function createNarang(canvas, o = {}) {
       } else sCol[i * 4 + 3] = 0;
     }
     sGeo.attributes.position.needsUpdate = true; sGeo.attributes.color.needsUpdate = true;
-
-    renderer.render(scene, camera);
-    raf = requestAnimationFrame(frame);
   }
   kick();
 
@@ -559,7 +589,7 @@ float coatMask = 0.0;
     float skin = 1.0 - smoothstep(0.25, 0.4, sat);
     float yel = smoothstep(0.4, 0.7, sat) * smoothstep(0.35, 0.55, dc.g) * step(dc.b, dc.g);   // yellow only, not the pink cheeks
     diffuseColor.b *= 1.0 + 0.12 * skin - 0.6 * yel;
-    diffuseColor.g *= 1.0 - 0.04 * skin;
+    diffuseColor.g *= 1.0 - 0.015 * skin;
   }
   // clear coat only on the headset, the horn logo and the tablet: neutral (low-saturation) colours in those areas
   vec3 dc = diffuseColor.rgb;
@@ -701,7 +731,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
     /** move the camera: distance from the model and the height it looks at */
     frameView(distance, targetY = 0) { if (distance) { tDist = dist = distance; zoomed = true; } camY = targetY; kick(); },
     /** render now and return a PNG data URL (e.g. to make a poster image) */
-    snapshot(type = 'image/png') { renderer.render(scene, camera); return canvas.toDataURL(type); },
+    snapshot(type = 'image/png') { const now = performance.now(); last = now - 16; step(now); renderer.render(scene, camera); return canvas.toDataURL(type); },
     /** for tuning only: three objects behind the character */
     get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, env: envRT }; },
     /** redraw the face after changing FACE_LAYOUT (tuning only) */
