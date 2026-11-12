@@ -10,9 +10,9 @@
 | 파일 | 내용 | 크기 |
 |---|---|---|
 | `narang.js` | 뷰어 모듈 (`createNarang`, `canRender3D`, `EXPRESSIONS`) | 38KB |
-| `models/narang_lite.glb` | 앉은 모델 경량판: 삼각형 10만, 텍스처 1024 WebP, meshopt | 1.04MB |
-| `models/narang_full.glb` | 앉은 모델 고화질판: 삼각형 37만, 텍스처 2048 WebP, meshopt | 3.19MB |
-| `models/sleep.glb` | 엎드린 모델: 삼각형 1.6만, WebP, meshopt | 0.18MB |
+| `models/narang_lite.glb` | 앉은 모델 경량판: 삼각형 10만, 텍스처 1024 WebP, meshopt | 1.12MB |
+| `models/narang_full.glb` | 앉은 모델 고화질판: 삼각형 37만, 텍스처 2048 WebP, meshopt | 3.34MB |
+| `models/sleep.glb` | 엎드린 모델: 삼각형 1.6만, WebP, meshopt | 0.26MB |
 | `posters/awake.webp`, `posters/sleep.webp` | WebGL이 없거나 움직임 줄이기일 때 쓸 정지 그림 (투명 배경) | 37KB / 81KB |
 | `compare/` | 원본 그림과 3D 비교 캡처, 손 흔들기 캡처 | |
 | `vendor/three/` | 데모 페이지용 three 0.187.0 (웹앱에서는 npm `three`를 씀) | |
@@ -118,6 +118,27 @@ export default function Narang3D({ mood }: { mood: 'sleep' | 'awake' | 'happy' }
 5. **버그 수정**: 카메라 위치를 애니메이션 루프 안에서만 잡고 있어서, 화면 밖에서 생성되거나 탭이 숨겨진 채 `snapshot()`을 부르면 빈 그림이 나왔습니다. 이제 생성할 때 카메라를 바로 놓고, `snapshot()`이 상태를 한 프레임 진행한 뒤 찍습니다.
 
 바뀐 파일: `narang.js`, `models/narang_full.glb`, `models/narang_lite.glb` (파일 이름 그대로, `sleep.glb`와 정지 그림은 그대로).
+
+## v3.3 (찰흙 느낌 줄이기)
+
+전후 비교: `compare/before_after_v3.3.png` (원본 / v3.2 / v3.3, 같은 조건), 원본 비교: `compare/compare_v3.3.png`, 조명 시안 3종: `compare/v33_variants.png`
+
+| 영역 (평균 RGB) | 원본 | v3.2 | v3.3 |
+|---|---|---|---|
+| 웃는 얼굴 피부 | 249, 237, 227 | 251, 237, 227 | 252, 239, 229 |
+| 모자 노란색 | 253, 220, 75 | 255, 224, 85 | 254, 226, 87 |
+| 잠든 얼굴 피부 | 248, 232, 222 | 247, 229, 217 | 248, 230, 218 |
+
+찰흙처럼 보이던 원인은 세 가지였습니다: 생성 모델 표면의 잔 굴곡, 틈새 그림자 부족, 무광 재질.
+
+1. **표면 다듬기**: 이음새를 붙인 상태에서 부피가 줄지 않는 방식(Taubin)으로 표면 전체를 다듬고 법선을 다시 계산했습니다. 잔 굴곡을 더하던 노멀맵은 뺐습니다.
+2. **틈새 그림자(AO)**: 정점마다 반구 방향 광선 48개를 쏴서, 모자 테두리 아래, 팔과 몸 사이, 헤드셋 둘레 같은 틈의 그림자를 정점 색(COLOR_0)으로 구웠습니다. 뷰어는 이걸 그대로 곱합니다(`vertexColors`).
+3. **소프트비닐 재질**: 거칠기 0.85 → 0.55, 벨벳 광택 0.25 → 0.4, 뒤쪽 위에서 오는 테두리 빛(0.7)을 더했습니다. 반사광은 0.95입니다.
+4. 엎드린 모델(`sleep.glb`)에도 같은 처리를 했습니다.
+
+바뀐 파일: `narang.js`, `models/narang_lite.glb` (1.12MB), `models/narang_full.glb` (3.34MB), `models/sleep.glb` (0.26MB).
+
+남은 한계: 잔 굴곡은 줄었지만 얼굴의 큰 굴곡(넓은 울퉁불퉁함)은 생성된 형태 자체라 남아 있습니다. 이걸 없애려면 Blender에서 다시 면을 짜거나(리메시) 모델을 새로 만들어야 합니다.
 
 ## 한계
 

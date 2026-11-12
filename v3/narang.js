@@ -271,10 +271,11 @@ export function createNarang(canvas, o = {}) {
   // key light from the upper left like the illustration, soft fill from the right, little flat ambient
   // Values fitted against the illustration's face / hood colours (see compare.html).
   // Note: in three r16x+ the scene environment is scaled by scene.environmentIntensity, not material.envMapIntensity.
-  scene.environmentIntensity = 0.9;
+  scene.environmentIntensity = 0.95;
   const hemi = new THREE.HemisphereLight(0xffffff, 0xcdbfa8, 0.1); scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(-3, 5, 4); scene.add(key);
   const fill = new THREE.DirectionalLight(0xffffff, 0.25); fill.position.set(4, 0.5, 3); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xfff6e0, 0.7); rim.position.set(1.5, 3, -5); scene.add(rim);   // soft-vinyl edge light (tuned below)
 
   const root = new THREE.Group(); scene.add(root);       // yaw (drag / view)
   const look = new THREE.Group(); root.add(look);        // small turn toward the pointer
@@ -617,8 +618,9 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
   function physical(src, extra) {
     return own(new THREE.MeshPhysicalMaterial(Object.assign({
       map: src.map || null, normalMap: src.normalMap || null, roughnessMap: src.roughnessMap || null,
-      normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.85, metalness: 0, envMapIntensity: 0.3,
-      sheen: 0.25, sheenRoughness: 0.45, sheenColor: new THREE.Color('#fff3e6')
+      vertexColors: !!src.vertexColors,   // baked ambient occlusion (COLOR_0) when the model has it
+      normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.55, metalness: 0, envMapIntensity: 0.3,   // soft-vinyl, not clay
+      sheen: 0.4, sheenRoughness: 0.45, sheenColor: new THREE.Color('#fff3e6')
     }, extra)));
   }
 
@@ -733,7 +735,7 @@ roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
     /** render now and return a PNG data URL (e.g. to make a poster image) */
     snapshot(type = 'image/png') { const now = performance.now(); last = now - 16; step(now); renderer.render(scene, camera); return canvas.toDataURL(type); },
     /** for tuning only: three objects behind the character */
-    get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, env: envRT }; },
+    get debug() { return { THREE, renderer, scene, camera, hemi, key, fill, rim, env: envRT }; },
     /** redraw the face after changing FACE_LAYOUT (tuning only) */
     redrawFace() { faceSig = ''; kick(); },
     /**
