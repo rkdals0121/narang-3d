@@ -7,7 +7,9 @@ from PIL import Image
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else 'out'
 os.makedirs(OUT, exist_ok=True)
-src = np.asarray(Image.open('ref_front.png').convert('RGB')).astype(np.float32)
+from PIL import ImageFilter
+# the front view is cut from the 4-view sheet (~450 px) and enlarged; a mild unsharp mask brings the edges back
+src = np.asarray(Image.open('ref_front.png').convert('RGB').filter(ImageFilter.UnsharpMask(radius=2.2, percent=60, threshold=2))).astype(np.float32)
 H, W = src.shape[:2]
 
 # ---------------------------------------------------------------- 1. alpha from the white background

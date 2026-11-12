@@ -19,6 +19,7 @@ const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t
 const easeOut = (t) => 1 - (1 - t) * (1 - t);
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t));
 const rand = (a, b) => a + Math.random() * (b - a);
+const easeOutBack = (t) => { const c = 1.9; return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2; };
 
 // ---------------------------------------------------------------- the art's anatomy (px in the 1024 art)
 const A = {
@@ -102,13 +103,14 @@ export function createNarang2D(host, o = {}) {
   let expr = mode === 'sleep' ? 'sleep' : 'smile', prevExpr = expr, exprT = 1;   // crossfade 0..1
   const num = Object.assign({}, EXPRESSIONS[expr]);                              // smoothed numbers
   let seq = null;            // running sequence {type, t0, dur, ...}
-  let talking = false;
+  let talking = false, userTalk = false, sayTalk = false, say = null, bubble = null;
   let blink = 1, nextBlink = 1.5, blinkT = -1, blinkN = 1;
   const look = { x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0 };
   let pointerT = -10, idleLookT = 0, idleNext = 6;
   const horn = { a: 0, v: 0 }, leaf = { a: 0, v: 0 };
   let lastHeadX = 0, lastHeadV = 0;
-  const P = { breath: 0, sq: 0, jy: 0, sway: 0, head: 0, hx: 0, hy: 0, tap: 0, tapL: 0, tapR: 0, arms: 0, droop: 0 };
+  const P = { breath: 0, sq: 0, jy: 0, sway: 0, head: 0, hx: 0, hy: 0, tap: 0, tapL: 0, tapR: 0, arms: 0, droop: 0, nod: 0, shk: 0 };
+  let lieS = 1, lieDY = 0;   // the lying art pops in / sinks out
   let aSit = pose === 'lie' ? 0 : 1, aLie = pose === 'lie' ? 1 : 0, night = pose === 'lie' ? 1 : 0;
   let heartGlow = 1, headsetGlow = 1, now = 0;
   const parts = [];
@@ -118,14 +120,14 @@ export function createNarang2D(host, o = {}) {
   const NV = (GRID + 1) * (GRID + 1);
   const rest = new Float32Array(NV * 2), uv = new Float32Array(NV * 2), pos = new Float32Array(NV * 2);
   const wHead = new Float32Array(NV), wDepth = new Float32Array(NV), wHorn = new Float32Array(NV), wLeaf = new Float32Array(NV);
-  const wHL = new Float32Array(NV), wHR = new Float32Array(NV), wTab = new Float32Array(NV);
+  const wHL = new Float32Array(NV), wHR = new Float32Array(NV), wTab = new Float32Array(NV), wSet = new Float32Array(NV);
   const lrest = new Float32Array(NV * 2), lpos = new Float32Array(NV * 2), wLHead = new Float32Array(NV);
   const idx = [];
   for (let j = 0; j <= GRID; j++) for (let i = 0; i <= GRID; i++) {
     const k = j * (GRID + 1) + i, x = (i / GRID) * 1024, y = (j / GRID) * 1024;
     rest[k * 2] = x; rest[k * 2 + 1] = y; uv[k * 2] = i / GRID; uv[k * 2 + 1] = j / GRID;
     wHead[k] = headW(x, y); wDepth[k] = depthW(x, y); wHorn[k] = hornW(x, y); wLeaf[k] = leafW(x, y);
-    wHL[k] = handW(x, y, A.handL); wHR[k] = handW(x, y, A.handR); wTab[k] = tabW(x, y);
+    wHL[k] = handW(x, y, A.handL); wHR[k] = handW(x, y, A.handR); wTab[k] = tabW(x, y); wSet[k] = setW(x, y);
     if (i < GRID && j < GRID) { const a = k, b = k + 1, c = k + GRID + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
   }
   function buildLie(w, h) {   // the lying art's grid, once its size is known
@@ -153,13 +155,14 @@ export function createNarang2D(host, o = {}) {
   }
   function leafW(x, y) { return (1 - smooth(25, 85, Math.hypot(x - A.leaf.x, y - A.leaf.y))) * smooth(690, 715, x); }
   function handW(x, y, c) { const e = Math.hypot((x - c.x) / 78, (y - c.y) / 82); return 1 - smooth(0.7, 1.15, e); }
+  function setW(x, y) { const e = Math.hypot((x - 860) / 82, (y - 575) / 135); return 1 - smooth(0.75, 1.1, e); }
   function tabW(x, y) {
     return smooth(A.tablet.x0 - 20, A.tablet.x0 + 5, x) * (1 - smooth(A.tablet.x1 - 5, A.tablet.x1 + 20, x)) *
       smooth(A.tablet.y0 - 15, A.tablet.y0 + 5, y) * (1 - smooth(A.tablet.y1 - 5, A.tablet.y1 + 15, y));
   }
 
   // one deform for mesh vertices and for effect anchors (so glows and particles stick to the body)
-  function deform(x, y, wh, wd, whn, wlf, whl, whr, wtb, out) {
+  function deform(x, y, wh, wd, whn, wlf, whl, whr, wtb, whs, out) {
     let px = x, py = y;
     if (wlf > 0) { const a = leaf.a * wlf, c = Math.cos(a), s = Math.sin(a), dx = px - A.leafPivot.x, dy = py - A.leafPivot.y; px = A.leafPivot.x + dx * c - dy * s; py = A.leafPivot.y + dx * s + dy * c; }
     // hands: taps (each hand on its own) and lifting the tablet together
@@ -169,8 +172,10 @@ export function createNarang2D(host, o = {}) {
     if (wh > 0) {
       const a = P.head, c = Math.cos(a), s = Math.sin(a), dx = px - A.neck.x, dy = py - A.neck.y;
       let qx = A.neck.x + dx * c - dy * s + P.hx, qy = A.neck.y + dx * s + dy * c + P.hy;
-      qx += look.x * 17 * wd - look.x * 6 * whn;   // the face slides over the dome; the horn behind moves the other way
-      qy += look.y * 11 * wd;
+      // 2.5D turn: the face slides over the dome, the horn and the ear cup (further back) move the other way
+      const lx = look.x + P.shk;
+      qx += lx * 24 * wd - lx * 8 * whn - lx * 7 * whs + P.shk * 10;
+      qy += look.y * 14 * wd + P.nod * (6 + 12 * wd);   // nod: the face dips more than the hood rim
       px += (qx - px) * wh; py += (qy - py) * wh;
     }
     // whole body: breathing, squash and stretch, jump, sway
@@ -182,9 +187,10 @@ export function createNarang2D(host, o = {}) {
   }
   const tmp = [0, 0];
   function mapPoint(x, y) {   // an art point through the current deformation
-    return deform(x, y, headW(x, y), depthW(x, y), hornW(x, y), leafW(x, y), handW(x, y, A.handL), handW(x, y, A.handR), tabW(x, y), [0, 0]);
+    return deform(x, y, headW(x, y), depthW(x, y), hornW(x, y), leafW(x, y), handW(x, y, A.handL), handW(x, y, A.handR), tabW(x, y), setW(x, y), [0, 0]);
   }
-  function lieToArt(x, y) { return [LIE.x + x * LIE.k, LIE.y + y * LIE.k]; }
+  function lieToArt(x, y) { const g = A.ground; return [g.x + (LIE.x + x * LIE.k - g.x) * lieS, g.y + (LIE.y + y * LIE.k - g.y) * lieS + lieDY]; }
+  function lieView() { const g = A.ground; return [LIE.k * lieS, g.x + (LIE.x - g.x) * lieS, g.y + (LIE.y - g.y) * lieS + lieDY]; }
   function mapLie(x, y) {
     const b = P.breath, sy = 1 + b * 0.02, sx = 1 - b * 0.006;
     let px = LIE_A.ground.x + (x - LIE_A.ground.x) * sx, py = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
@@ -243,7 +249,7 @@ export function createNarang2D(host, o = {}) {
     gl.bindBuffer(gl.ARRAY_BUFFER, buf.uv); gl.enableVertexAttribArray(U.aUV); gl.vertexAttribPointer(U.aUV, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idx);
     if (aLie > 0.001) {
-      gl.uniform3f(U.uView, S * LIE.k, OX + LIE.x * S, OY + LIE.y * S);
+      const lv = lieView(); gl.uniform3f(U.uView, S * lv[0], OX + lv[1] * S, OY + lv[2] * S);
       gl.bindBuffer(gl.ARRAY_BUFFER, buf.lpos); gl.bufferData(gl.ARRAY_BUFFER, lpos, gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(U.aPos); gl.vertexAttribPointer(U.aPos, 2, gl.FLOAT, false, 0, 0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.sleep);
@@ -266,7 +272,7 @@ export function createNarang2D(host, o = {}) {
     c2.setTransform(dpr, 0, 0, dpr, 0, 0); c2.clearRect(0, 0, W, H);
     const sy = 1 + P.breath * 0.012 - P.sq, sx = 1 - P.breath * 0.006 + P.sq * 0.6;
     if (aLie > 0.001) {
-      c2.save(); c2.globalAlpha = aLie; c2.translate(OX + LIE.x * S, OY + LIE.y * S); c2.scale(S * LIE.k, S * LIE.k);
+      const lv = lieView(); c2.save(); c2.globalAlpha = aLie; c2.translate(OX + lv[1] * S, OY + lv[2] * S); c2.scale(S * lv[0], S * lv[0]);
       c2.drawImage(img.sleep, 0, 0); c2.restore();
     }
     if (aSit > 0.001) {
@@ -533,11 +539,37 @@ export function createNarang2D(host, o = {}) {
       if (t > 1.45 && !s.c) { s.c = 1; setExpr('smile'); }
     }, end() { P.sq = 0; P.droop = 0; blink = 1; setExpr(baseExpr); } },
 
-    toLie: { dur: 1.5, run(t) { aSit = 1 - smooth(0.45, 0.85, t); aLie = smooth(0.75, 1.3, t); night = smooth(0, 1.0, t); if (t > 0.8 && !this.s) { this.s = 1; const p = mapPoint(480, 600); spawn('spark', p[0], p[1], 6); } },
-      start() { this.s = 0; },
-      end() { aSit = 0; aLie = 1; night = 1; } },
-    fromLie: { dur: 1.2, run(t) { aLie = 1 - smooth(0, 0.45, t); aSit = smooth(0.35, 0.8, t); night = 1 - smooth(0.2, 1.2, t); },
-      start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; } }
+    toLie: { dur: 1.7, run(t, s) {   // night falls, the sitting one sinks down, the lying one pops up
+      night = smooth(0, 1.1, t);
+      const sink = smooth(0.15, 0.7, t); P.sq = 0.11 * sink; P.jy = 22 * sink;
+      aSit = 1 - smooth(0.42, 0.72, t);
+      const u = clamp((t - 0.6) / 0.65, 0, 1); aLie = smooth(0.6, 0.95, t); lieS = 0.88 + 0.12 * easeOutBack(u); lieDY = 28 * (1 - easeOut(u));
+      if (t > 0.62 && !s.p) { s.p = 1; const p = lieToArt(450, 380); spawn('spark', p[0], p[1], 9); }
+    }, end() { P.sq = 0; P.jy = 0; aSit = 0; aLie = 1; night = 1; lieS = 1; lieDY = 0; } },
+    fromLie: { dur: 1.4, run(t) {
+      const out = smooth(0, 0.4, t); aLie = 1 - out; lieS = 1 - 0.1 * out; lieDY = 22 * out;
+      aSit = smooth(0.28, 0.6, t);
+      const u = Math.max(0, t - 0.28); P.sq = t < 0.28 ? 0.1 : 0.1 * Math.cos(u * 10) * Math.exp(-u * 5);
+      night = 1 - smooth(0.2, 1.3, t);
+    }, start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; for (let i = parts.length - 1; i >= 0; i--) if (parts[i].type === 'z') parts.splice(i, 1); }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
+
+    nod: { dur: 1.15, run(t) {   // yes, yes
+      P.nod = Math.max(0, Math.sin(t * TAU / 0.52)) * (1 - smooth(0.7, 1.15, t)); P.sq = 0.012 * P.nod;
+    }, start() { setExpr('laugh'); }, end() { P.nod = 0; P.sq = 0; setExpr(baseExpr); } },
+
+    shake: { dur: 1.3, run(t) {   // no, no
+      P.shk = 0.9 * Math.sin(t * TAU / 0.44) * (1 - smooth(0.55, 1.3, t)); P.head = -0.045 * P.shk;
+    }, end() { P.shk = 0; P.head = 0; } },
+
+    hello: { dur: 1.7, run(t, s) {   // hop, wink, sparkle, wiggle
+      const u = clamp(t / 0.5, 0, 1); P.jy = -48 * Math.sin(PI * u) * (opts.reducedMotion ? 0.3 : 1);
+      P.sq = t < 0.08 ? 0.05 * (t / 0.08) : (t > 0.5 && t < 0.62 ? 0.06 * Math.sin(PI * (t - 0.5) / 0.12) : 0);
+      if (t > 0.1 && !s.w) { s.w = 1; setExpr('wink'); hornKick(-2.5); }
+      if (t > 0.3 && !s.p) { s.p = 1; const p = mapPoint(250, 300); spawn('spark', p[0], p[1], 6); const q = mapPoint(780, 260); spawn('note', q[0], q[1], 1); }
+      P.head = 0; P.sway = 0;
+      if (t > 0.62) { const v = t - 0.62; P.head = 0.06 * Math.sin(v * TAU / 0.6) * Math.max(0, 1 - v / 1.05); P.sway = 0.02 * Math.sin(v * TAU / 0.6 + 0.5) * Math.max(0, 1 - v / 1.05); }
+      if (t > 1.2 && !s.l) { s.l = 1; setExpr('laugh'); }
+    }, end() { P.jy = 0; P.sq = 0; P.head = 0; P.sway = 0; setExpr(baseExpr); } }
   };
   const queue = [];
   function play(type, then) {
@@ -581,12 +613,13 @@ export function createNarang2D(host, o = {}) {
     if (idleNext <= 0) {
       idleNext = rand(6, 11);
       const r = Math.random();
-      if (r < 0.4) play('tablet'); else if (r < 0.7) play('wiggle'); else if (r < 0.85) { setExpr('wink'); setTimeout(() => { if (expr === 'wink' && !seq) setExpr(baseExpr); }, 900); } else play('jump');
+      if (r < 0.32) play('tablet'); else if (r < 0.55) play('wiggle'); else if (r < 0.65) play('nod'); else if (r < 0.75) play('hello'); else if (r < 0.87) { setExpr('wink'); setTimeout(() => { if (expr === 'wink' && !seq) setExpr(baseExpr); }, 900); } else play('jump');
     }
   }
 
   // ---------------------------------------------------------------- frame
   function step(t) {
+    if (last && t <= last) return;   // the clock went backwards (advance() ran ahead of the page): nothing to do
     const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016); last = t; now += dt;
     const rm = opts.reducedMotion;
     runSeq(); idle(dt);
@@ -616,12 +649,12 @@ export function createNarang2D(host, o = {}) {
     // head: droop when asleep + a slow nod, tilt toward the look direction
     const nod = asleep ? Math.sin(now * TAU / per + 0.8) * 0.012 : 0;
     const baseHead = P.droop * 0.07 + look.x * 0.045 + nod;
-    if (!(seq && (seq.type === 'wiggle' || seq.type === 'love'))) P.head += (baseHead - P.head) * (1 - Math.exp(-dt * 8));
-    else P.head += baseHead * 0.3;
+    if (!(seq && (seq.type === 'wiggle' || seq.type === 'love' || seq.type === 'shake' || seq.type === 'hello'))) P.head += (baseHead - P.head) * (1 - Math.exp(-dt * 8));
+    else P.head = clamp(P.head + baseHead * 0.3, -0.16, 0.16);   // the sequence set P.head this frame; add the look tilt once
     P.hy = P.droop * 16 + (asleep ? P.breath * 2 : 0);
     P.hx = P.droop * 6;
     // springs: horn and leaf, driven by head motion
-    const headX = P.head * 300 + look.x * 17 + P.jy * 0.02, hv = (headX - lastHeadX) / Math.max(dt, 1e-3), ha = (hv - lastHeadV) / Math.max(dt, 1e-3);
+    const headX = P.head * 300 + (look.x + P.shk) * 24 + P.nod * 6 + P.jy * 0.02, hv = (headX - lastHeadX) / Math.max(dt, 1e-3), ha = (hv - lastHeadV) / Math.max(dt, 1e-3);
     lastHeadX = headX; lastHeadV = hv;
     const drive = clamp(-ha * 0.00012, -6, 6);
     horn.v += (-60 * horn.a - 5.5 * horn.v + drive) * dt; horn.a += horn.v * dt; horn.a = clamp(horn.a, -0.12, 0.12);
@@ -638,7 +671,7 @@ export function createNarang2D(host, o = {}) {
     if (aSit > 0.001) {
       const out = tmp;
       for (let k = 0; k < NV; k++) {
-        deform(rest[k * 2], rest[k * 2 + 1], wHead[k], wDepth[k], wHorn[k], wLeaf[k], wHL[k], wHR[k], wTab[k], out);
+        deform(rest[k * 2], rest[k * 2 + 1], wHead[k], wDepth[k], wHorn[k], wLeaf[k], wHL[k], wHR[k], wTab[k], wSet[k], out);
         pos[k * 2] = out[0]; pos[k * 2 + 1] = out[1];
       }
     }
@@ -651,9 +684,57 @@ export function createNarang2D(host, o = {}) {
         lpos[k * 2] = LIE_A.ground.x + (x - LIE_A.ground.x) * sx; lpos[k * 2 + 1] = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
       }
     }
+    updateSay();
+    talking = userTalk || sayTalk;
     const fd = drawFace();
     if (gl) drawGL(fd); else draw2D();
     drawBack(); drawFront(dt);
+  }
+
+  // ---------------------------------------------------------------- speech bubble
+  function ensureStyle() {
+    if (document.getElementById('n2d-style')) return;
+    const st = document.createElement('style'); st.id = 'n2d-style';
+    st.textContent = `.n2d-bubble{position:absolute;left:0;top:0;z-index:3;max-width:min(78%,320px);padding:10px 15px;border-radius:18px;background:#fff;color:#3b2a12;
+font:600 15px/1.45 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;box-shadow:0 6px 18px rgba(80,60,20,.18);
+transform-origin:var(--tail,50%) 100%;transform:translate(-50%,-100%) scale(.5);opacity:0;transition:transform .24s cubic-bezier(.3,1.6,.5,1),opacity .18s;
+pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center;white-space:pre-line}
+.n2d-bubble.on{transform:translate(-50%,-100%) scale(1);opacity:1}
+.n2d-bubble::after{content:"";position:absolute;left:var(--tail,50%);bottom:-8px;width:16px;height:16px;background:#fff;transform:translateX(-50%) rotate(45deg);border-radius:3px}
+.n2d-bubble .n2d-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}`;
+    document.head.appendChild(st);
+  }
+  function updateSay() {
+    if (!say) { sayTalk = false; return; }
+    const el = now - say.t0, n = Math.min(say.text.length, Math.floor(el / 0.055));
+    if (n !== say.shown) { say.shown = n; say.vis.textContent = say.text.slice(0, n); }
+    sayTalk = n < say.text.length && el < say.typeEnd;
+    // place it over the head, inside the stage
+    const a = aLie > 0.5 ? toCss(lieToArt(300, 160)) : toCss(mapPoint(470, 120));
+    const bw = bubble.offsetWidth || 120, left = clamp(a[0], bw / 2 + 6, W - bw / 2 - 6), top = Math.max(a[1], (bubble.offsetHeight || 40) + 14);
+    bubble.style.left = left + 'px'; bubble.style.top = top + 'px';
+    bubble.style.setProperty('--tail', clamp(a[0] - left + bw / 2, 22, bw - 22) + 'px');
+    if (el > say.typeEnd + say.hold && !say.closing) { say.closing = true; bubble.classList.remove('on'); }
+    if (el > say.typeEnd + say.hold + 0.25) { const r = say.resolve; say = null; sayTalk = false; r(); }
+  }
+  function drawBubbleTo(x) {   // the bubble into snapshots (preview videos)
+    // untransformed size and the anchor point (bottom centre); the pop-in is redone here on animation time
+    const k = dpr, w = bubble.offsetWidth, hh = bubble.offsetHeight, ax = parseFloat(bubble.style.left) || 0, ay = parseFloat(bubble.style.top) || 0;
+    const pop = 0.5 + 0.5 * easeOutBack(clamp((now - say.t0) / 0.24, 0, 1));
+    const bw = w * k, bh = hh * k, bx0 = (ax - w / 2) * k, by0 = (ay - hh) * k;
+    const tail = (parseFloat(bubble.style.getPropertyValue('--tail')) || w / 2) * k;
+    x.save(); x.translate(bx0 + tail, by0 + bh); x.scale(pop, pop); x.translate(-(bx0 + tail), -(by0 + bh)); x.shadowColor = 'rgba(80,60,20,0.18)'; x.shadowBlur = 18 * k; x.shadowOffsetY = 6 * k; x.fillStyle = '#fff';
+    x.beginPath(); x.roundRect(bx0, by0, bw, bh, 18 * k); x.fill(); x.shadowColor = 'transparent';
+    x.beginPath(); x.moveTo(bx0 + tail - 10 * k, by0 + bh - 1); x.lineTo(bx0 + tail, by0 + bh + 10 * k); x.lineTo(bx0 + tail + 10 * k, by0 + bh - 1); x.fill();
+    x.fillStyle = '#3b2a12'; x.font = `600 ${15 * k}px "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+    // wrap like the page does (keep words together), using the full text so lines do not jump while typing
+    const full = say.text, shown = say.vis.textContent.length, maxW = bw - 22 * k, words = full.split(' '), lines = [];
+    let line = '';
+    for (const w of words) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
+    lines.push(line);
+    let left = shown; const vis = lines.map((l) => { const take = Math.max(0, Math.min(l.length, left)); left -= take + 1; return l.slice(0, take); });
+    const lh = 15 * 1.45 * k; x.textAlign = 'left'; vis.forEach((l, i) => x.fillText(l, bx0 + bw / 2 - x.measureText(lines[i]).width / 2, by0 + bh / 2 + (i - (lines.length - 1) / 2) * lh));
+    x.restore();
   }
 
   // ---------------------------------------------------------------- loop, size, input
@@ -718,7 +799,31 @@ export function createNarang2D(host, o = {}) {
     lookAtTablet() { if (ready && mode === 'awake' && !seq) play('tablet'); },
     wiggle() { if (ready && mode === 'awake' && !seq) play('wiggle'); },
     /** mouth moves as if speaking (e.g. while a guide message is read out) */
-    talk(on) { talking = !!on; faceSig = ''; kick(); },
+    talk(on) { userTalk = !!on; faceSig = ''; kick(); },
+    /** speech bubble over the head, typed out while the mouth talks. Resolves when it closes. */
+    say(text, { hold } = {}) {
+      text = String(text || '');
+      if (!ready || !text) return Promise.resolve();
+      if (mode === 'sleep') goWake();
+      ensureStyle();
+      if (!bubble) {
+        bubble = document.createElement('div'); bubble.className = 'n2d-bubble';
+        bubble.innerHTML = '<span class="n2d-v" aria-hidden="true"></span><span class="n2d-sr" role="status" aria-live="polite"></span>';
+        host.appendChild(bubble);
+      }
+      if (say) { const r = say.resolve; say = null; r(); }
+      const vis = bubble.querySelector('.n2d-v');
+      bubble.querySelector('.n2d-sr').textContent = text;
+      bubble.classList.remove('on'); bubble.style.width = 'auto';
+      // measure the full text once so the bubble does not grow while typing
+      vis.textContent = text; const w = bubble.offsetWidth; bubble.style.width = w + 'px'; vis.textContent = '';
+      void bubble.offsetWidth; bubble.classList.add('on');
+      const typeEnd = text.length * 0.055 + 0.1;
+      return new Promise((resolve) => { say = { text, t0: now, shown: -1, vis, typeEnd, hold: hold != null ? hold : Math.max(1.4, text.length * 0.05), resolve }; kick(); });
+    },
+    nod() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('nod'); },
+    shake() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('shake'); },
+    hello() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('hello'); },
     /** 'sit' (자기 1, 앉아서) | 'lie' (자기 2, 엎드려 · 밤 배경) */
     sleep(kind = 'sit') { if (ready && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) goSleep(kind); },
     wake() { if (ready && !seq) goWake(); },
@@ -726,21 +831,23 @@ export function createNarang2D(host, o = {}) {
     lookAt(x, y) { if (x == null) { pointerT = -10; return; } look.tx = clamp(x, -1, 1); look.ty = clamp(y, -0.6, 0.7); pointerT = now + 1e6; },
     setIdle(on) { opts.idle = !!on; },
     setReducedMotion(on) { opts.reducedMotion = !!on; },
-    get state() { return { mode, pose, expression: baseExpr, busy: !!seq, talking }; },
-    get _debug() { return { blink, expr, prevExpr, exprT, aSit, aLie, night, look: { x: look.x, y: look.y } }; },
+    get state() { return { mode, pose, expression: baseExpr, busy: !!seq, talking: userTalk, saying: !!say }; },
+    get _debug() { return { blink, expr, prevExpr, exprT, aSit, aLie, night, now, seq: seq && seq.type, P: Object.assign({}, P), horn: horn.a, leaf: leaf.a, look: { x: look.x, y: look.y } }; },
     /** run the animation forward by `sec` seconds at 60 fps (tests, posters; works in a hidden tab) */
     advance(sec) { if (!ready) return; let t = (last || performance.now()); for (let i = 0; i < Math.round(sec * 60); i++) { t += 1000 / 60; step(t); } },
     /** PNG data URL of the character layers (for posters / checks) */
-    snapshot() {
+    snapshot(type = 'image/png', bg = null, quality = 0.9) {
       const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; const x = c.getContext('2d');
-      step((last || performance.now()) + 1); x.drawImage(back, 0, 0); x.drawImage(cv, 0, 0); x.drawImage(front, 0, 0); return c.toDataURL('image/png');
+      step((last || performance.now()) + 1); if (bg) { x.fillStyle = bg; x.fillRect(0, 0, c.width, c.height); } x.drawImage(back, 0, 0); x.drawImage(cv, 0, 0); x.drawImage(front, 0, 0);
+      if (bubble && say && !say.closing) drawBubbleTo(x);
+      return c.toDataURL(type, quality);
     },
     dispose() {
       if (dead) return; dead = true; cancelAnimationFrame(raf);
       ro.disconnect(); if (io) io.disconnect(); document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pointermove', onMove); front.removeEventListener('pointerdown', onDown);
       if (gl && prog) { for (const t of Object.values(tex)) gl.deleteTexture(t); for (const b of Object.values(buf)) gl.deleteBuffer(b); gl.deleteProgram(prog); }
-      back.remove(); cv.remove(); front.remove();
+      back.remove(); cv.remove(); front.remove(); if (bubble) bubble.remove();
     }
   };
   return api;

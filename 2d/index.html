@@ -35,6 +35,8 @@
   .foot { font-size: 12px; color: var(--sub); margin-top: 12px; text-align: center; line-height: 1.6; }
   .foot a { color: inherit; }
   .err { padding: 24px; text-align: center; color: var(--sub); }
+  .say { display: flex; gap: 6px; }
+  .say input { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 999px; border: 1.5px solid var(--chip-line); background: #fff; color: var(--ink); }
 </style>
 </head>
 <body>
@@ -56,8 +58,22 @@
       <button id="love">하트 뿅</button>
       <button id="tablet">태블릿 보기</button>
       <button id="wiggle">들썩들썩</button>
-      <button id="talk" aria-pressed="false">말하기</button>
+      <button id="hello">인사하기</button>
+      <button id="nod">끄덕끄덕</button>
+      <button id="shake">도리도리</button>
     </div></div>
+    <div class="row"><b>말하기</b>
+      <form class="say" id="sayForm">
+        <input id="sayText" maxlength="60" value="안녕하세요! 인천공항 길 안내를 도와드릴게요." aria-label="나랑이가 할 말">
+        <button type="submit">말풍선</button>
+      </form>
+      <div class="chips" style="margin-top:6px">
+        <button type="button" data-say="출국장은 3층이에요. 같이 가 볼까요?">길 안내</button>
+        <button type="button" data-say="잠시만요, 직원분을 불러 드릴게요!">직원 호출</button>
+        <button type="button" data-say="도장 하나 더 모았어요! 축하해요!">스탬프</button>
+        <button type="button" id="talk" aria-pressed="false">입만 움직이기</button>
+      </div>
+    </div>
     <div class="row"><b>잠</b><div class="chips">
       <button id="sleepSit">자기 1 (앉아서)</button>
       <button id="sleepLie">자기 2 (엎드려)</button>
@@ -69,7 +85,7 @@
     <a href="../v3/">3D 버전 보기</a></p>
 
 <script type="module">
-  import { createNarang2D, canRender2D } from './narang2d.js?v=0.1';
+  import { createNarang2D, canRender2D } from './narang2d.js?v=0.2';
   const stage = document.getElementById('stage');
   const n = createNarang2D(stage, {
     assets: './assets/',
@@ -88,6 +104,13 @@
   on('tablet', () => n.lookAtTablet());
   on('wiggle', () => n.wiggle());
   on('talk', (e) => { const p = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(p)); n.talk(p); });
+  on('hello', () => { n.hello(); n.say('안녕하세요! 저는 나랑이예요.'); });
+  on('nod', () => n.nod());
+  on('shake', () => n.shake());
+  document.getElementById('sayForm').addEventListener('submit', (e) => { e.preventDefault(); n.say(document.getElementById('sayText').value); });
+  document.querySelectorAll('[data-say]').forEach((b) => b.addEventListener('click', () => {
+    const t = b.dataset.say; if (t.includes('축하')) n.love(); else if (t.includes('직원')) n.nod(); n.say(t);
+  }));
   on('sleepSit', () => n.sleep('sit'));
   on('sleepLie', () => n.sleep('lie'));
   on('wake', () => n.wake());
