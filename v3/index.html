@@ -90,8 +90,8 @@
   <div class="group">
     <p class="label">품질 · 접근성 (비교용)</p>
     <div class="row">
-      <button type="button" data-q="lite" aria-pressed="true">경량 1.0MB</button>
-      <button type="button" data-q="full" aria-pressed="false">고화질 3.1MB</button>
+      <button type="button" data-q="lite" aria-pressed="true">경량 1.1MB</button>
+      <button type="button" data-q="full" aria-pressed="false">고화질 3.3MB</button>
       <button type="button" id="rm" aria-pressed="false">움직임 줄이기 → 정지 그림</button>
     </div>
   </div>
@@ -99,7 +99,7 @@
 <script type="module">
   import { createNarang, canRender3D } from './narang.js?v=3.3';
 
-  const MODELS = { lite: { url: './models/narang_lite.glb?v=3.3', label: '경량 · 삼각형 10만 · 1.0MB' }, full: { url: './models/narang_full.glb?v=3.3', label: '고화질 · 삼각형 37만 · 3.1MB' } };
+  const MODELS = { lite: { url: './models/narang_lite.glb?v=3.3', label: '경량 · 삼각형 10만 · 1.1MB' }, full: { url: './models/narang_full.glb?v=3.3', label: '고화질 · 삼각형 37만 · 3.3MB' } };
   const canvas = document.getElementById('c'), poster = document.getElementById('poster');
   const statusEl = document.getElementById('status'), meta = document.getElementById('meta');
   const $ = (s) => [...document.querySelectorAll(s)];
