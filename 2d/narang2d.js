@@ -1,0 +1,747 @@
+// 나랑이 2.5D — the original art, mesh-warped in WebGL, with a live face and effects.
+//
+//   import { createNarang2D } from './narang2d.js';
+//   const n = createNarang2D(document.getElementById('stage'), { assets: './assets/' });
+//   n.setExpression('laugh'); n.jump(); n.sleep('lie'); n.wake();
+//
+// Layers (all in the art's own 1024 px space):
+//   base.webp      the character with eyes, brows and mouth painted out
+//   eye/brow/mouth sprites cut from the art (default face = the art, untouched)
+//   sleep.webp     the sleeping art, black background turned transparent (glow kept)
+// The base is drawn as a 48 x 48 grid whose vertices are moved every frame
+// (breathing, head turn with depth parallax, horn and leaf springs, squash and stretch),
+// so nothing is cut apart and no holes open up.
+
+const PI = Math.PI, TAU = PI * 2;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const easeOut = (t) => 1 - (1 - t) * (1 - t);
+const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t));
+const rand = (a, b) => a + Math.random() * (b - a);
+
+// ---------------------------------------------------------------- the art's anatomy (px in the 1024 art)
+const A = {
+  neck: { x: 480, y: 760 },          // head pivot
+  ground: { x: 480, y: 968 },        // breathing / squash anchor
+  face: { x: 478, y: 560, rx: 330, ry: 300 },   // depth dome for the 2.5D head turn
+  hornBase: { x: 610, y: 250 }, hornTip: { x: 880, y: 95 },
+  leaf: { x: 748, y: 800 }, leafPivot: { x: 700, y: 792 },
+  handL: { x: 350, y: 862 }, handR: { x: 606, y: 862 },
+  tablet: { x0: 350, x1: 600, y0: 745, y1: 920 },
+  heart: { x: 478, y: 828 },
+  headset: { x: 903, y: 578 },
+  zzz: { x: 640, y: 300 }
+};
+const FR = { x: 228, y: 356, w: 500, h: 384 };   // face layer rectangle
+const VIEW = { x: 40, y: -120, w: 960, h: 1130 }; // what the stage shows (room above for jumps and Zzz)
+const LIE = { k: 0.97, x: 82, y: 323 };            // sleeping art placed in the same space
+const LIE_A = { headset: { x: 670, y: 433 }, zzz: { x: 297, y: 219 }, ground: { x: 452, y: 647 } };   // in sleep.webp px
+const GRID = 48;
+
+export const EXPRESSIONS = {
+  //          eyes L / R            brows lift, tilt   eye scale  mouth type, sx, sy   blush
+  smile:    { eL: 'art',   eR: 'art',   bl: 0,   bt: 0,    es: 1,    m: 'art',   mx: 1,    my: 1,    blush: 0 },
+  laugh:    { eL: 'happy', eR: 'happy', bl: -9,  bt: 0,    es: 1,    m: 'art',   mx: 1.12, my: 1.38, blush: 0.55 },
+  wink:     { eL: 'happy', eR: 'art',   bl: -5,  bt: 0,    es: 1,    m: 'art',   mx: 1,    my: 0.9,  blush: 0.3 },
+  surprise: { eL: 'art',   eR: 'art',   bl: -17, bt: 0,    es: 1.1,  m: 'o',     mx: 1,    my: 1,    blush: 0 },
+  sad:      { eL: 'sad',   eR: 'sad',   bl: -3,  bt: 0.28, es: 1,    m: 'frown', mx: 1,    my: 1,    blush: 0 },
+  love:     { eL: 'heart', eR: 'heart', bl: -7,  bt: 0,    es: 1,    m: 'art',   mx: 1.05, my: 1.18, blush: 0.85 },
+  sleepy:   { eL: 'half',  eR: 'half',  bl: 2,   bt: 0,    es: 1,    m: 'art',   mx: 0.85, my: 0.6,  blush: 0.1 },
+  yawn:     { eL: 'happy', eR: 'happy', bl: -10, bt: 0,    es: 1,    m: 'o',     mx: 1.5,  my: 1.7,  blush: 0.15 },
+  sleep:    { eL: 'sleep', eR: 'sleep', bl: 3,   bt: 0,    es: 1,    m: 'sleep', mx: 1,    my: 1,    blush: 0.2 }
+};
+
+export function canRender2D() {
+  try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { return false; }
+}
+
+/**
+ * @param {HTMLElement} host  an element with a size; three canvases are added inside it
+ * @param {object} [o]
+ * @param {string} [o.assets='./assets/']
+ * @param {'awake'|'sleep'} [o.mood='awake']
+ * @param {'sit'|'lie'} [o.sleepPose='sit']
+ * @param {boolean} [o.lookAtPointer=true]
+ * @param {boolean} [o.tap=true]          tap: jump (head), hearts (tablet), wake (asleep)
+ * @param {boolean} [o.idle=true]         idle life: looking around, tablet glances, wiggles
+ * @param {boolean} [o.reducedMotion]     default: the OS setting
+ * @param {number}  [o.maxPixelRatio=2]
+ * @param {(api) => void} [o.onReady]
+ * @param {(state) => void} [o.onChange]
+ */
+export function createNarang2D(host, o = {}) {
+  const opts = Object.assign({
+    assets: './assets/', mood: 'awake', sleepPose: 'sit', lookAtPointer: true, tap: true, idle: true, maxPixelRatio: 2,
+    reducedMotion: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  }, o);
+  if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+  const mk = (z) => {
+    const c = document.createElement('canvas');
+    c.style.cssText = `position:absolute;inset:0;width:100%;height:100%;display:block;z-index:${z};touch-action:manipulation`;
+    host.appendChild(c); return c;
+  };
+  const back = mk(0), cv = mk(1), front = mk(2);
+  const bx = back.getContext('2d'), fx = front.getContext('2d');
+  let gl = cv.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true }) || cv.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: true });
+  let c2 = null;   // canvas-2D fallback when WebGL is missing
+  if (!gl) c2 = cv.getContext('2d');
+
+  // ---------------------------------------------------------------- state
+  let dead = false, ready = false, raf = 0, last = 0, visible = true;
+  let W = 1, H = 1, dpr = 1, S = 1, OX = 0, OY = 0;   // art px -> css px: x * S + OX
+  const img = {}; let L = null;
+  const face = document.createElement('canvas'); face.width = FR.w; face.height = FR.h;
+  const fctx = face.getContext('2d');
+  let faceSig = '';
+
+  // animation state
+  let mode = opts.mood === 'sleep' ? 'sleep' : 'awake';
+  let pose = opts.mood === 'sleep' ? (opts.sleepPose === 'lie' ? 'lie' : 'sit') : 'awake';
+  let baseExpr = 'smile';
+  let expr = mode === 'sleep' ? 'sleep' : 'smile', prevExpr = expr, exprT = 1;   // crossfade 0..1
+  const num = Object.assign({}, EXPRESSIONS[expr]);                              // smoothed numbers
+  let seq = null;            // running sequence {type, t0, dur, ...}
+  let talking = false;
+  let blink = 1, nextBlink = 1.5, blinkT = -1, blinkN = 1;
+  const look = { x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0 };
+  let pointerT = -10, idleLookT = 0, idleNext = 6;
+  const horn = { a: 0, v: 0 }, leaf = { a: 0, v: 0 };
+  let lastHeadX = 0, lastHeadV = 0;
+  const P = { breath: 0, sq: 0, jy: 0, sway: 0, head: 0, hx: 0, hy: 0, tap: 0, tapL: 0, tapR: 0, arms: 0, droop: 0 };
+  let aSit = pose === 'lie' ? 0 : 1, aLie = pose === 'lie' ? 1 : 0, night = pose === 'lie' ? 1 : 0;
+  let heartGlow = 1, headsetGlow = 1, now = 0;
+  const parts = [];
+  const stars = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random() * 0.75, p: Math.random() * TAU, s: rand(0.6, 1.6) }));
+
+  // ---------------------------------------------------------------- mesh
+  const NV = (GRID + 1) * (GRID + 1);
+  const rest = new Float32Array(NV * 2), uv = new Float32Array(NV * 2), pos = new Float32Array(NV * 2);
+  const wHead = new Float32Array(NV), wDepth = new Float32Array(NV), wHorn = new Float32Array(NV), wLeaf = new Float32Array(NV);
+  const wHL = new Float32Array(NV), wHR = new Float32Array(NV), wTab = new Float32Array(NV);
+  const lrest = new Float32Array(NV * 2), lpos = new Float32Array(NV * 2), wLHead = new Float32Array(NV);
+  const idx = [];
+  for (let j = 0; j <= GRID; j++) for (let i = 0; i <= GRID; i++) {
+    const k = j * (GRID + 1) + i, x = (i / GRID) * 1024, y = (j / GRID) * 1024;
+    rest[k * 2] = x; rest[k * 2 + 1] = y; uv[k * 2] = i / GRID; uv[k * 2 + 1] = j / GRID;
+    wHead[k] = headW(x, y); wDepth[k] = depthW(x, y); wHorn[k] = hornW(x, y); wLeaf[k] = leafW(x, y);
+    wHL[k] = handW(x, y, A.handL); wHR[k] = handW(x, y, A.handR); wTab[k] = tabW(x, y);
+    if (i < GRID && j < GRID) { const a = k, b = k + 1, c = k + GRID + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
+  }
+  function buildLie(w, h) {   // the lying art's grid, once its size is known
+    for (let j = 0; j <= GRID; j++) for (let i = 0; i <= GRID; i++) {
+      const k = j * (GRID + 1) + i, ly = (j / GRID) * h;
+      lrest[k * 2] = (i / GRID) * w; lrest[k * 2 + 1] = ly; wLHead[k] = 1 - smooth(470, 560, ly);
+    }
+  }
+
+  function headW(x, y) {
+    let h = 1 - smooth(700, 772, y);
+    const inTabX = smooth(323, 347, x) * (1 - smooth(603, 627, x));
+    h *= 1 - smooth(726, 746, y) * inTabX;
+    return h;
+  }
+  function depthW(x, y) {
+    const e = ((x - A.face.x) / A.face.rx) ** 2 + ((y - A.face.y) / A.face.ry) ** 2;
+    return clamp(1 - e, 0, 1);
+  }
+  function hornW(x, y) {
+    const ux = A.hornTip.x - A.hornBase.x, uy = A.hornTip.y - A.hornBase.y, len = Math.hypot(ux, uy);
+    const dx = x - A.hornBase.x, dy = y - A.hornBase.y;
+    const t = (dx * ux + dy * uy) / (len * len), perp = Math.abs(dx * uy - dy * ux) / len;
+    return smooth(0, 1, t) * (1 - smooth(120, 175, perp));
+  }
+  function leafW(x, y) { return (1 - smooth(25, 85, Math.hypot(x - A.leaf.x, y - A.leaf.y))) * smooth(690, 715, x); }
+  function handW(x, y, c) { const e = Math.hypot((x - c.x) / 78, (y - c.y) / 82); return 1 - smooth(0.7, 1.15, e); }
+  function tabW(x, y) {
+    return smooth(A.tablet.x0 - 20, A.tablet.x0 + 5, x) * (1 - smooth(A.tablet.x1 - 5, A.tablet.x1 + 20, x)) *
+      smooth(A.tablet.y0 - 15, A.tablet.y0 + 5, y) * (1 - smooth(A.tablet.y1 - 5, A.tablet.y1 + 15, y));
+  }
+
+  // one deform for mesh vertices and for effect anchors (so glows and particles stick to the body)
+  function deform(x, y, wh, wd, whn, wlf, whl, whr, wtb, out) {
+    let px = x, py = y;
+    if (wlf > 0) { const a = leaf.a * wlf, c = Math.cos(a), s = Math.sin(a), dx = px - A.leafPivot.x, dy = py - A.leafPivot.y; px = A.leafPivot.x + dx * c - dy * s; py = A.leafPivot.y + dx * s + dy * c; }
+    // hands: taps (each hand on its own) and lifting the tablet together
+    py += P.tapL * whl + P.tapR * whr;
+    const arm = Math.max(whl, whr, wtb); py -= P.arms * arm;
+    if (whn > 0) { const a = horn.a * whn, c = Math.cos(a), s = Math.sin(a), dx = px - A.hornBase.x, dy = py - A.hornBase.y; px = A.hornBase.x + dx * c - dy * s; py = A.hornBase.y + dx * s + dy * c; }
+    if (wh > 0) {
+      const a = P.head, c = Math.cos(a), s = Math.sin(a), dx = px - A.neck.x, dy = py - A.neck.y;
+      let qx = A.neck.x + dx * c - dy * s + P.hx, qy = A.neck.y + dx * s + dy * c + P.hy;
+      qx += look.x * 17 * wd - look.x * 6 * whn;   // the face slides over the dome; the horn behind moves the other way
+      qy += look.y * 11 * wd;
+      px += (qx - px) * wh; py += (qy - py) * wh;
+    }
+    // whole body: breathing, squash and stretch, jump, sway
+    const sy = 1 + P.breath * 0.012 - P.sq, sx = 1 - P.breath * 0.006 + P.sq * 0.6;
+    let dx = (px - A.ground.x) * sx, dy = (py - A.ground.y) * sy;
+    if (P.sway) { const c = Math.cos(P.sway), s = Math.sin(P.sway); const ex = dx * c - dy * s; dy = dx * s + dy * c; dx = ex; }
+    out[0] = A.ground.x + dx; out[1] = A.ground.y + dy + P.jy;
+    return out;
+  }
+  const tmp = [0, 0];
+  function mapPoint(x, y) {   // an art point through the current deformation
+    return deform(x, y, headW(x, y), depthW(x, y), hornW(x, y), leafW(x, y), handW(x, y, A.handL), handW(x, y, A.handR), tabW(x, y), [0, 0]);
+  }
+  function lieToArt(x, y) { return [LIE.x + x * LIE.k, LIE.y + y * LIE.k]; }
+  function mapLie(x, y) {
+    const b = P.breath, sy = 1 + b * 0.02, sx = 1 - b * 0.006;
+    let px = LIE_A.ground.x + (x - LIE_A.ground.x) * sx, py = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
+    return lieToArt(px, py);
+  }
+
+  // ---------------------------------------------------------------- WebGL
+  let prog, buf = {}, tex = {}, U = {};
+  function initGL() {
+    const is2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+    const vs = `attribute vec2 aPos; attribute vec2 aUV; uniform vec3 uView; uniform vec2 uRes; varying vec2 vUV;
+      void main(){ vec2 p = aPos * uView.x + uView.yz; vUV = aUV; gl_Position = vec4(p / uRes * 2.0 - 1.0, 0.0, 1.0); gl_Position.y = -gl_Position.y; }`;
+    const fs = `precision mediump float; varying vec2 vUV; uniform sampler2D uTex; uniform sampler2D uFace; uniform vec4 uFR; uniform float uUseFace; uniform float uAlpha;
+      void main(){
+        vec4 c = texture2D(uTex, vUV);
+        if (uUseFace > 0.5) {
+          vec2 f = (vUV - uFR.xy) / uFR.zw;
+          if (f.x > 0.0 && f.x < 1.0 && f.y > 0.0 && f.y < 1.0) { vec4 t = texture2D(uFace, f); c = t + c * (1.0 - t.a); }
+        }
+        gl_FragColor = c * uAlpha;
+      }`;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    for (const n of ['uView', 'uRes', 'uTex', 'uFace', 'uFR', 'uUseFace', 'uAlpha']) U[n] = gl.getUniformLocation(prog, n);
+    U.aPos = gl.getAttribLocation(prog, 'aPos'); U.aUV = gl.getAttribLocation(prog, 'aUV');
+    buf.pos = gl.createBuffer(); buf.lpos = gl.createBuffer(); buf.uv = gl.createBuffer(); buf.idx = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.uv); gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    const mkTex = (src) => {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+      const pot = (n) => (n & (n - 1)) === 0;
+      if (is2 || (pot(src.width) && pot(src.height))) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
+      else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      return t;
+    };
+    tex.base = mkTex(img.base); tex.sleep = mkTex(img.sleep);
+    tex.face = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex.face);
+    for (const [p, v] of [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, face);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.uniform1i(U.uTex, 0); gl.uniform1i(U.uFace, 1);
+    gl.uniform4f(U.uFR, FR.x / 1024, FR.y / 1024, FR.w / 1024, FR.h / 1024);
+  }
+
+  function drawGL(faceDirty) {
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform2f(U.uRes, W, H);
+    if (faceDirty) { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex.face); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, face); }
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.uv); gl.enableVertexAttribArray(U.aUV); gl.vertexAttribPointer(U.aUV, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idx);
+    if (aLie > 0.001) {
+      gl.uniform3f(U.uView, S * LIE.k, OX + LIE.x * S, OY + LIE.y * S);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.lpos); gl.bufferData(gl.ARRAY_BUFFER, lpos, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(U.aPos); gl.vertexAttribPointer(U.aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.sleep);
+      gl.uniform1f(U.uUseFace, 0); gl.uniform1f(U.uAlpha, aLie);
+      gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+    if (aSit > 0.001) {
+      gl.uniform3f(U.uView, S, OX, OY);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.pos); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(U.aPos); gl.vertexAttribPointer(U.aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.base);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex.face);
+      gl.uniform1f(U.uUseFace, 1); gl.uniform1f(U.uAlpha, aSit);
+      gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+  }
+
+  // canvas-2D fallback: no warping, only bob and squash
+  function draw2D() {
+    c2.setTransform(dpr, 0, 0, dpr, 0, 0); c2.clearRect(0, 0, W, H);
+    const sy = 1 + P.breath * 0.012 - P.sq, sx = 1 - P.breath * 0.006 + P.sq * 0.6;
+    if (aLie > 0.001) {
+      c2.save(); c2.globalAlpha = aLie; c2.translate(OX + LIE.x * S, OY + LIE.y * S); c2.scale(S * LIE.k, S * LIE.k);
+      c2.drawImage(img.sleep, 0, 0); c2.restore();
+    }
+    if (aSit > 0.001) {
+      c2.save(); c2.globalAlpha = aSit;
+      c2.translate(OX + A.ground.x * S, OY + (A.ground.y + P.jy) * S); c2.scale(S * sx, S * sy); c2.translate(-A.ground.x, -A.ground.y);
+      c2.drawImage(img.base, 0, 0); c2.drawImage(face, FR.x, FR.y); c2.restore();
+    }
+  }
+
+  // ---------------------------------------------------------------- face drawing
+  const SK = () => `rgb(${L.skin[0]},${L.skin[1]},${L.skin[2]})`;
+  function drawSpriteAt(name, cx, cy, sx, sy, rot = 0) {
+    const s = L[name]; fctx.save(); fctx.translate(cx - FR.x, cy - FR.y); if (rot) fctx.rotate(rot); fctx.scale(sx, sy);
+    fctx.drawImage(img[name], s.x - s.cx, s.y - s.cy); fctx.restore();
+  }
+  function eyeCentre(side) { const s = L[side < 0 ? 'eye_l' : 'eye_r']; return { x: s.cx, y: s.cy, rx: s.rx, ry: s.ry }; }
+  function drawEye(type, side, alpha, pop) {
+    if (alpha <= 0.01) return;
+    const e = eyeCentre(side), gx = look.x * 5, gy = look.y * 4;
+    const x = e.x + gx, y = e.y + gy, rx = e.rx, ry = e.ry, sc = num.es * pop;
+    fctx.save(); fctx.globalAlpha = alpha;
+    const name = side < 0 ? 'eye_l' : 'eye_r';
+    const lidLine = (k) => {   // closed eye during a blink
+      fctx.globalAlpha = alpha * k; fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 8; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(x - FR.x - rx * 0.85, y - FR.y + ry * 0.05); fctx.quadraticCurveTo(x - FR.x, y - FR.y + ry * 0.38, x - FR.x + rx * 0.85, y - FR.y + ry * 0.05); fctx.stroke();
+    };
+    if (type === 'art' || type === 'sad' || type === 'half') {
+      const open = type === 'half' ? 0.42 * blink : blink;
+      const vis = smooth(0.06, 0.3, open);   // the squashed eye fades into a closed lid line
+      fctx.globalAlpha = alpha * vis;
+      drawSpriteAt(name, x, y + ry * (1 - open) * 0.35, sc, sc * Math.max(open, 0.04));
+      if (type === 'sad' || type === 'half') {
+        // the upper part of the eye is cut away, so the real skin of the base shows (an eyelid), drooping outwards when sad
+        const t = type === 'sad' ? 0.3 : 0, ox = side < 0 ? -1 : 1;
+        const ly = y - FR.y - ry * (type === 'sad' ? 0.42 : 0.1) * Math.max(open, 0.2);
+        const xl = x - FR.x - rx * 1.7, xr = x - FR.x + rx * 1.7, yl = ly - ox * t * rx * 0.85, yr = ly + ox * t * rx * 0.85;
+        fctx.save(); fctx.beginPath(); fctx.ellipse(x - FR.x, y - FR.y, rx * sc + 34, ry * sc + 34, 0, 0, TAU); fctx.clip();
+        fctx.globalCompositeOperation = 'destination-out'; fctx.globalAlpha = 1;
+        fctx.beginPath(); fctx.moveTo(xl, yl - 300); fctx.lineTo(xr, yr - 300); fctx.lineTo(xr, yr); fctx.lineTo(xl, yl); fctx.closePath();
+        fctx.filter = 'blur(1.5px)'; fctx.fill(); fctx.filter = 'none';
+        fctx.restore();
+        fctx.save(); fctx.globalAlpha = alpha * vis; fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 7; fctx.lineCap = 'round';
+        const k = 0.5; fctx.beginPath(); fctx.moveTo(lerp(x - FR.x, xl, k), lerp(ly, yl, k)); fctx.lineTo(lerp(x - FR.x, xr, k), lerp(ly, yr, k)); fctx.stroke();
+        fctx.restore();
+      }
+      if (open < 0.3) lidLine(1 - vis);
+    } else if (type === 'happy') {
+      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop, pop);
+      fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 13; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(-rx * 0.9, ry * 0.2); fctx.quadraticCurveTo(0, -ry * 0.7, rx * 0.9, ry * 0.2); fctx.stroke();
+    } else if (type === 'sleep') {   // the crescent of the sleeping art: bowed down, tapered, outer end a little raised
+      fctx.translate(x - FR.x, y - FR.y + ry * 0.12); fctx.scale(pop, pop);
+      const w = rx * 1.02, lift = ry * 0.14, lx = -w, rx2 = w, ly = side < 0 ? -lift : 0, ry2 = side > 0 ? -lift : 0;
+      const g = fctx.createLinearGradient(0, 0, 0, ry * 0.5); g.addColorStop(0, '#3A1A08'); g.addColorStop(1, '#5A2E14');
+      fctx.fillStyle = g; fctx.strokeStyle = '#3A1D0E'; fctx.lineWidth = 2; fctx.lineJoin = 'round';
+      fctx.beginPath(); fctx.moveTo(lx, ly); fctx.quadraticCurveTo(0, ry * 0.42, rx2, ry2); fctx.quadraticCurveTo(0, ry * 0.66, lx, ly); fctx.closePath(); fctx.fill(); fctx.stroke();
+    } else if (type === 'heart') {
+      const beat = 1 + 0.08 * Math.max(0, Math.sin(now * 9));
+      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop * beat, pop * beat * Math.max(blink, 0.1));
+      const s = rx * 1.05;
+      const hp = new Path2D(); hp.moveTo(0, s * 0.85);
+      hp.bezierCurveTo(-s * 1.25, s * 0.05, -s * 0.9, -s * 1.05, 0, -s * 0.45);
+      hp.bezierCurveTo(s * 0.9, -s * 1.05, s * 1.25, s * 0.05, 0, s * 0.85);
+      const g = fctx.createLinearGradient(0, -s, 0, s); g.addColorStop(0, '#FF6F7E'); g.addColorStop(1, '#D9283F');
+      fctx.fillStyle = g; fctx.fill(hp); fctx.strokeStyle = '#8E1424'; fctx.lineWidth = 4; fctx.stroke(hp);
+      fctx.fillStyle = 'rgba(255,255,255,0.92)'; fctx.beginPath(); fctx.ellipse(-s * 0.42, -s * 0.38, s * 0.2, s * 0.13, -0.6, 0, TAU); fctx.fill();
+    }
+    fctx.restore();
+  }
+  function drawMouth(type, alpha, pop) {
+    if (alpha <= 0.01) return;
+    const m = L.mouth; fctx.save(); fctx.globalAlpha = alpha;
+    const cx = m.cx + look.x * 7 - FR.x, top = m.y + 14 + look.y * 5 - FR.y;
+    if (type === 'art') {
+      let my = num.my;
+      if (talking) my *= 0.35 + 0.75 * Math.abs(Math.sin(now * 13) * Math.sin(now * 7.3 + 1));
+      fctx.translate(cx, top); fctx.scale(num.mx * pop, my * pop); fctx.drawImage(img.mouth, m.x - m.cx, -14);
+    } else if (type === 'o') {
+      const rw = 17 * num.mx * pop, rh = 21 * num.my * pop;
+      fctx.translate(cx, top + 30);
+      fctx.shadowColor = 'rgba(176,128,96,0.5)'; fctx.shadowBlur = 6;
+      const g = fctx.createLinearGradient(0, -rh, 0, rh); g.addColorStop(0, '#6E0204'); g.addColorStop(1, '#C23A40');
+      fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(0, 0, rw, rh, 0, 0, TAU); fctx.fill(); fctx.shadowColor = 'transparent';
+      fctx.fillStyle = '#FC7A7E'; fctx.beginPath(); fctx.ellipse(0, rh * 0.5, rw * 0.62, rh * 0.38, 0, 0, TAU); fctx.fill();
+    } else if (type === 'frown') {
+      fctx.translate(cx, top + 34); fctx.scale(pop, pop);
+      fctx.strokeStyle = '#A8262F'; fctx.lineWidth = 7; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(-30, 10); fctx.quadraticCurveTo(0, -14, 30, 10); fctx.stroke();
+    } else if (type === 'sleep') {
+      fctx.translate(cx, top + 24); fctx.scale(pop, pop);
+      fctx.strokeStyle = '#B0222E'; fctx.lineWidth = 6; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(-27, 0); fctx.quadraticCurveTo(0, 20, 27, 0); fctx.stroke();
+    }
+    fctx.restore();
+  }
+  function drawBrows() {
+    for (const side of [-1, 1]) {
+      const n = side < 0 ? 'brow_l' : 'brow_r', s = L[n];
+      drawSpriteAt(n, s.cx + look.x * 9, s.cy + num.bl + look.y * 6, 1, 1, num.bt * side * -1);
+    }
+  }
+  function drawBlush() {
+    if (num.blush < 0.02) return;
+    for (const [x, y] of [[272, 650], [698, 632]]) {
+      const g = fctx.createRadialGradient(x - FR.x, y - FR.y, 0, x - FR.x, y - FR.y, 52);
+      g.addColorStop(0, `rgba(255,120,130,${0.42 * num.blush})`); g.addColorStop(1, 'rgba(255,120,130,0)');
+      fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(x - FR.x, y - FR.y, 60, 48, 0, 0, TAU); fctx.fill();
+    }
+  }
+  function drawFace() {
+    const E0 = EXPRESSIONS[prevExpr], E1 = EXPRESSIONS[expr], k = easeInOut(exprT);
+    const sig = [prevExpr, expr, k.toFixed(2), blink.toFixed(2), look.x.toFixed(2), look.y.toFixed(2), num.bl.toFixed(1), num.bt.toFixed(2), num.es.toFixed(3),
+      num.mx.toFixed(2), num.my.toFixed(2), num.blush.toFixed(2), talking ? (now * 30 | 0) : 0, (E1.eL === 'heart' || E0.eL === 'heart') ? (now * 30 | 0) : 0].join('|');
+    if (sig === faceSig) return false;
+    faceSig = sig;
+    fctx.clearRect(0, 0, FR.w, FR.h);
+    drawBrows();
+    for (const side of [-1, 1]) {
+      const key = side < 0 ? 'eL' : 'eR';
+      if (E0[key] === E1[key] || k >= 1) drawEye(E1[key], side, 1, 1);
+      else { drawEye(E0[key], side, 1 - k, 1 - 0.25 * k); drawEye(E1[key], side, k, 0.75 + 0.25 * k); }
+    }
+    if (E0.m === E1.m || k >= 1) drawMouth(E1.m, 1, 1);
+    else { drawMouth(E0.m, 1 - k, 1 - 0.2 * k); drawMouth(E1.m, k, 0.8 + 0.2 * k); }
+    drawBlush();
+    return true;
+  }
+
+  // ---------------------------------------------------------------- effects (front / back canvases)
+  function toCss(p) { return [p[0] * S + OX, p[1] * S + OY]; }
+  function spawn(type, x, y, n) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(-PI, 0), sp = rand(120, 300);
+      if (type === 'spark') parts.push({ type, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, life: rand(0.7, 1.1), age: 0, s: rand(14, 26), r: rand(0, PI), c: Math.random() < 0.5 ? '#FFD84A' : '#FFFFFF' });
+      else if (type === 'heart') parts.push({ type, x: x + rand(-40, 40), y, vx: rand(-70, 70), vy: rand(-260, -160), life: rand(1.1, 1.6), age: 0, s: rand(18, 30), r: rand(-0.3, 0.3), c: Math.random() < 0.6 ? '#9BE15D' : '#FF7A8A' });
+      else if (type === 'z') parts.push({ type, x, y, vx: rand(40, 70), vy: rand(-70, -50), life: 2.6, age: 0, s: rand(30, 40), r: rand(-0.2, 0.1), c: '#8A6A3A' });
+      else if (type === 'note') parts.push({ type, x, y, vx: rand(30, 80), vy: rand(-120, -80), life: 1.6, age: 0, s: 34, r: 0, c: '#E0A800' });
+    }
+  }
+  function drawStar(ctx, x, y, s, r) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(r); ctx.beginPath();
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU, rr = i % 2 ? s * 0.28 : s; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  function heartPath(ctx, x, y, s) {
+    ctx.beginPath(); ctx.moveTo(x, y + s * 0.85);
+    ctx.bezierCurveTo(x - s * 1.25, y + s * 0.05, x - s * 0.9, y - s * 1.05, x, y - s * 0.45);
+    ctx.bezierCurveTo(x + s * 0.9, y - s * 1.05, x + s * 1.25, y + s * 0.05, x, y + s * 0.85);
+  }
+  function glow(ctx, p, r, col, a, sx = 1, sy = 1) {
+    if (a <= 0.01) return;
+    const [x, y] = toCss(p); ctx.save(); ctx.translate(x, y); ctx.scale(sx, sy);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * S);
+    g.addColorStop(0, `rgba(${col},${0.55 * a})`); g.addColorStop(0.45, `rgba(${col},${0.22 * a})`); g.addColorStop(1, `rgba(${col},0)`);
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * S, 0, TAU); ctx.fill(); ctx.restore();
+  }
+  function drawBack() {
+    bx.setTransform(dpr, 0, 0, dpr, 0, 0); bx.clearRect(0, 0, W, H);
+    if (night > 0.01) {   // night sky for the lying sleep
+      bx.globalAlpha = night;
+      const g = bx.createRadialGradient(W / 2, H * 0.62, 0, W / 2, H * 0.62, Math.max(W, H) * 0.8);
+      g.addColorStop(0, '#26305e'); g.addColorStop(1, '#0b1028');
+      bx.fillStyle = g; bx.fillRect(0, 0, W, H);
+      for (const s of stars) {
+        const tw = 0.45 + 0.55 * Math.sin(now * s.s * 1.7 + s.p);
+        bx.fillStyle = `rgba(255,246,210,${0.75 * tw})`; drawStar(bx, s.x * W, s.y * H, 2.2 * s.s, 0);
+      }
+      bx.globalAlpha = 1;
+    }
+    // ground shadow
+    const g0 = aSit * (1 - smooth(0, 120, -P.jy) * 0.6) + aLie * 0.7;
+    const [gx, gy] = toCss([A.ground.x, A.ground.y + 6]);
+    const k = 1 - smooth(0, 140, -P.jy) * 0.35;
+    const gr = bx.createRadialGradient(gx, gy, 0, gx, gy, 330 * S * k);
+    gr.addColorStop(0, `rgba(80,60,20,${0.22 * g0})`); gr.addColorStop(1, 'rgba(80,60,20,0)');
+    bx.save(); bx.translate(gx, gy); bx.scale(1, 0.12); bx.translate(-gx, -gy); bx.fillStyle = gr; bx.beginPath(); bx.arc(gx, gy, 330 * S * k, 0, TAU); bx.fill(); bx.restore();
+  }
+  function drawFront(dt) {
+    fx.setTransform(dpr, 0, 0, dpr, 0, 0); fx.clearRect(0, 0, W, H);
+    // glowing headset and tablet heart
+    if (aSit > 0.01) {
+      glow(fx, mapPoint(A.headset.x, A.headset.y), 95, '150,240,60', headsetGlow * aSit * 0.9, 0.55, 1);
+      const hb = heartGlow; glow(fx, mapPoint(A.heart.x, A.heart.y), 70 + 18 * (hb - 1), '160,255,80', hb * aSit * 0.75);
+    }
+    if (aLie > 0.01) glow(fx, mapLie(LIE_A.headset.x, LIE_A.headset.y), 80, '150,240,60', headsetGlow * aLie * 0.8, 0.6, 1);
+    // particles
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i]; p.age += dt;
+      if (p.age >= p.life) { parts.splice(i, 1); continue; }
+      const u = p.age / p.life;
+      if (p.type === 'spark') { p.vy += 380 * dt; p.vx *= 0.98; }
+      else if (p.type === 'heart') { p.vy *= 0.985; p.vx *= 0.97; p.x += Math.sin(p.age * 6) * 0.6; }
+      else if (p.type === 'z') { p.vx = 50 + Math.sin(p.age * 2.4) * 30; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      const [x, y] = toCss([p.x, p.y]); const sz = p.s * S;
+      const a = u < 0.15 ? u / 0.15 : 1 - smooth(0.6, 1, u);
+      fx.save(); fx.globalAlpha = a; fx.fillStyle = p.c;
+      if (p.type === 'spark') drawStar(fx, x, y, sz * (u < 0.2 ? u / 0.2 : 1), p.r + p.age * 3);
+      else if (p.type === 'heart') { heartPath(fx, x, y, sz * 0.6 * Math.min(1, u * 5)); fx.fill(); }
+      else if (p.type === 'z' || p.type === 'note') {
+        fx.translate(x, y); fx.rotate(p.r); const s = sz * (0.6 + u * 0.7);
+        fx.font = `900 ${s}px "Arial Rounded MT Bold","Pretendard",system-ui,sans-serif`; fx.textAlign = 'center'; fx.textBaseline = 'middle';
+        fx.lineWidth = s * 0.16; fx.strokeStyle = night > 0.5 ? 'rgba(20,24,60,0.9)' : 'rgba(255,255,255,0.95)'; fx.lineJoin = 'round';
+        const t = p.type === 'z' ? 'Z' : '♪'; fx.strokeText(t, 0, 0); fx.fillStyle = night > 0.5 ? '#FFE9A8' : p.c; fx.fillText(t, 0, 0);
+      }
+      fx.restore();
+    }
+  }
+
+  // ---------------------------------------------------------------- behaviour
+  function setExpr(name) {
+    if (!EXPRESSIONS[name] || name === expr) return;
+    prevExpr = exprT < 0.5 ? prevExpr : expr; expr = name; exprT = 0; kick();
+  }
+  function emit() { if (opts.onChange) opts.onChange(api.state); }
+  function hornKick(v) { horn.v += v; }
+
+  const SEQ = {
+    jump: { dur: 1.0, run(t, s) {
+      let sq = 0, jy = 0; const H0 = opts.reducedMotion ? 30 : 95;
+      if (t < 0.13) sq = 0.07 * easeOut(t / 0.13);
+      else if (t < 0.56) { const u = (t - 0.13) / 0.43; jy = -H0 * Math.sin(PI * u); sq = -0.07 * Math.max(0, 1 - u * 2.4) + 0.02 * smooth(0.7, 1, u); if (!s.k1) { s.k1 = 1; hornKick(-3.2); } if (u > 0.45 && !s.sp) { s.sp = 1; const p = mapPoint(480, 330); spawn('spark', p[0], p[1], 9); } }
+      else if (t < 0.7) { sq = 0.085 * Math.sin(PI * (t - 0.56) / 0.14); if (!s.k2) { s.k2 = 1; hornKick(4); leaf.v += 3; } }
+      else { const u = (t - 0.7) / 0.3; sq = -0.025 * Math.sin(u * PI * 2) * (1 - u); }
+      P.sq = sq; P.jy = jy; P.arms = jy < 0 ? -jy * 0.08 : 0;
+    }, start() { setExpr('laugh'); }, end() { P.sq = 0; P.jy = 0; P.arms = 0; setExpr(baseExpr); } },
+
+    love: { dur: 1.9, run(t, s) {
+      if (!s.b) { s.b = 1; const p = mapPoint(A.heart.x, A.heart.y - 30); spawn('heart', p[0], p[1], 9); }
+      heartGlow = 1 + 0.9 * Math.max(0, Math.sin(t * 9)) * (1 - t / 1.9);
+      const u = clamp(t / 0.5, 0, 1); P.jy = -26 * Math.sin(PI * u) * (opts.reducedMotion ? 0.3 : 1); P.arms = 10 * Math.sin(PI * clamp(t / 1.2, 0, 1));
+      P.head = 0.05 * Math.sin(t * 7) * (1 - t / 1.9);
+    }, start() { setExpr('love'); hornKick(-2); }, end() { heartGlow = 1; P.jy = 0; P.arms = 0; P.head = 0; setExpr(baseExpr); } },
+
+    tablet: { dur: 3.2, run(t, s) {   // look down at the tablet, tap it, smile
+      const down = smooth(0, 0.4, t) * (1 - smooth(2.5, 2.9, t));
+      look.tx = -0.08 * down; look.ty = 0.95 * down;
+      const tap = t > 0.6 && t < 2.2 ? Math.max(0, Math.sin((t - 0.6) * TAU * 1.9)) : 0;
+      const left = Math.floor((t - 0.6) * 1.9) % 2 === 0;
+      P.tapL = left ? tap * 7 : 0; P.tapR = left ? 0 : tap * 7;
+      heartGlow = 1 + tap * 0.6;
+      if (tap > 0.95 && !s['h' + Math.floor(t * 2)]) { s['h' + Math.floor(t * 2)] = 1; const p = mapPoint(A.heart.x, A.heart.y - 20); spawn('heart', p[0], p[1], 1); }
+      if (t > 2.6 && !s.l) { s.l = 1; setExpr('laugh'); hornKick(1.5); }
+    }, start() { pointerT = -10; }, end() { P.tapL = P.tapR = 0; heartGlow = 1; setExpr(baseExpr); } },
+
+    wiggle: { dur: 1.5, run(t) {
+      P.head = 0.07 * Math.sin(t * TAU / 0.75) * (1 - t / 1.5); P.sway = 0.025 * Math.sin(t * TAU / 0.75 + 0.6) * (1 - t / 1.5);
+      if (t > 1.1) { const p = mapPoint(780, 280); if (!this.n) { this.n = 1; spawn('note', p[0], p[1], 1); } }
+    }, start() { this.n = 0; setExpr('laugh'); }, end() { P.head = 0; P.sway = 0; setExpr(baseExpr); } },
+
+    doze: { dur: 2.6, run(t, s) {   // yawn, eyes close, head droops
+      if (t < 0.9) { if (!s.y) { s.y = 1; setExpr('yawn'); } P.sq = -0.03 * Math.sin(PI * t / 0.9); }
+      else if (t < 1.6) { if (!s.h) { s.h = 1; setExpr('sleepy'); } }
+      else if (!s.z) { s.z = 1; setExpr('sleep'); }
+      P.droop = smooth(0.9, 2.4, t);
+    }, end() { P.sq = 0; P.droop = 1; } },
+
+    wake: { dur: 1.8, run(t, s) {
+      P.droop = 1 - smooth(0, 0.5, t);
+      if (t > 0.35 && !s.a) { s.a = 1; prevExpr = expr = 'smile'; exprT = 1; blink = 0.05; }
+      if (t > 0.35 && t < 0.95) blink = [0.35, 0.05, 0.6, 0.1, 1][Math.min(4, Math.floor((t - 0.35) / 0.12))];
+      if (t > 0.95 && !s.b) { s.b = 1; blink = 1; setExpr('surprise'); hornKick(-2.5); const p = mapPoint(480, 330); spawn('spark', p[0], p[1], 7); }
+      if (t > 0.95) { const u = (t - 0.95) / 0.85; P.sq = -0.05 * Math.sin(PI * clamp(u * 1.6, 0, 1)); }
+      if (t > 1.45 && !s.c) { s.c = 1; setExpr('smile'); }
+    }, end() { P.sq = 0; P.droop = 0; blink = 1; setExpr(baseExpr); } },
+
+    toLie: { dur: 1.5, run(t) { aSit = 1 - smooth(0.45, 0.85, t); aLie = smooth(0.75, 1.3, t); night = smooth(0, 1.0, t); if (t > 0.8 && !this.s) { this.s = 1; const p = mapPoint(480, 600); spawn('spark', p[0], p[1], 6); } },
+      start() { this.s = 0; },
+      end() { aSit = 0; aLie = 1; night = 1; } },
+    fromLie: { dur: 1.2, run(t) { aLie = 1 - smooth(0, 0.45, t); aSit = smooth(0.35, 0.8, t); night = 1 - smooth(0.2, 1.2, t); },
+      start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; } }
+  };
+  const queue = [];
+  function play(type, then) {
+    if (seq && SEQ[seq.type].end) SEQ[seq.type].end.call(SEQ[seq.type], seq);
+    seq = { type, t0: now, then };
+    if (SEQ[type].start) SEQ[type].start.call(SEQ[type], seq);
+    emit(); kick();
+  }
+  function runSeq() {
+    if (!seq) return;
+    const d = SEQ[seq.type], t = now - seq.t0;
+    d.run.call(d, Math.min(t, d.dur), seq);
+    if (t >= d.dur) {
+      const then = seq.then; if (d.end) d.end.call(d, seq); seq = null;
+      if (then) then(); else emit();
+    }
+  }
+
+  function goSleep(kind) {
+    kind = kind === 'lie' ? 'lie' : 'sit';
+    if (mode === 'sleep' && pose === kind) return;
+    if (mode === 'sleep' && pose === 'sit' && kind === 'lie') { pose = 'lie'; play('toLie', emit); return; }
+    if (mode === 'sleep' && pose === 'lie' && kind === 'sit') { pose = 'sit'; play('fromLie', emit); return; }
+    mode = 'sleep'; pose = kind; baseExpr = 'smile';
+    play('doze', () => { if (kind === 'lie') play('toLie', emit); else emit(); });
+  }
+  function goWake() {
+    if (mode !== 'sleep') return;
+    const wasLie = pose === 'lie'; mode = 'awake'; pose = 'awake';
+    if (wasLie) play('fromLie', () => play('wake')); else play('wake');
+  }
+
+  // idle life
+  function idle(dt) {
+    if (!opts.idle || mode !== 'awake' || seq || opts.reducedMotion) return;
+    idleNext -= dt;
+    if (now - pointerT > 2.5) {
+      idleLookT -= dt;
+      if (idleLookT <= 0) { idleLookT = rand(1.8, 4.2); const c = Math.random() < 0.35; look.tx = c ? 0 : rand(-0.7, 0.7); look.ty = c ? 0 : rand(-0.35, 0.35); }
+    }
+    if (idleNext <= 0) {
+      idleNext = rand(6, 11);
+      const r = Math.random();
+      if (r < 0.4) play('tablet'); else if (r < 0.7) play('wiggle'); else if (r < 0.85) { setExpr('wink'); setTimeout(() => { if (expr === 'wink' && !seq) setExpr(baseExpr); }, 900); } else play('jump');
+    }
+  }
+
+  // ---------------------------------------------------------------- frame
+  function step(t) {
+    const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016); last = t; now += dt;
+    const rm = opts.reducedMotion;
+    runSeq(); idle(dt);
+    // expression crossfade and smoothed numbers
+    exprT = Math.min(1, exprT + dt / 0.16);
+    const E = EXPRESSIONS[expr], kk = 1 - Math.exp(-dt * 14);
+    for (const n of ['bl', 'bt', 'es', 'mx', 'my', 'blush']) num[n] += (E[n] - num[n]) * kk;
+    // blinking (single or double); the wake sequence drives the eyes itself
+    if (!(seq && seq.type === 'wake')) {
+      if (blinkT < 0) {
+        blink = 1; nextBlink -= dt;
+        if (nextBlink <= 0 && mode === 'awake') { blinkT = 0; blinkN = Math.random() < 0.22 ? 2 : 1; }
+      } else {
+        blinkT += dt; const d = 0.17, cyc = 0.25, i = Math.floor(blinkT / cyc), u = blinkT - i * cyc;
+        blink = i < blinkN && u < d ? 1 - Math.sin(PI * u / d) * 0.96 : 1;
+        if (blinkT >= blinkN * cyc) { blinkT = -1; nextBlink = rand(2.2, 5.5); }
+      }
+    }
+    // look: spring toward target
+    const kL = 1 - Math.exp(-dt * (seq && seq.type === 'tablet' ? 6 : 4.5));
+    const ltx = mode === 'sleep' ? 0 : look.tx, lty = mode === 'sleep' ? 0.35 : look.ty;
+    const ox = look.x; look.x += (ltx * (rm ? 0.4 : 1) - look.x) * kL; look.y += (lty * (rm ? 0.4 : 1) - look.y) * kL;
+    // breathing
+    const asleep = mode === 'sleep' || (seq && seq.type === 'doze');
+    const per = asleep ? 4.6 : 3.2;
+    P.breath = Math.sin(now * TAU / per) * (asleep ? 1.6 : 1) * (rm ? 0.5 : 1);
+    // head: droop when asleep + a slow nod, tilt toward the look direction
+    const nod = asleep ? Math.sin(now * TAU / per + 0.8) * 0.012 : 0;
+    const baseHead = P.droop * 0.07 + look.x * 0.045 + nod;
+    if (!(seq && (seq.type === 'wiggle' || seq.type === 'love'))) P.head += (baseHead - P.head) * (1 - Math.exp(-dt * 8));
+    else P.head += baseHead * 0.3;
+    P.hy = P.droop * 16 + (asleep ? P.breath * 2 : 0);
+    P.hx = P.droop * 6;
+    // springs: horn and leaf, driven by head motion
+    const headX = P.head * 300 + look.x * 17 + P.jy * 0.02, hv = (headX - lastHeadX) / Math.max(dt, 1e-3), ha = (hv - lastHeadV) / Math.max(dt, 1e-3);
+    lastHeadX = headX; lastHeadV = hv;
+    const drive = clamp(-ha * 0.00012, -6, 6);
+    horn.v += (-60 * horn.a - 5.5 * horn.v + drive) * dt; horn.a += horn.v * dt; horn.a = clamp(horn.a, -0.12, 0.12);
+    const breeze = rm ? 0 : Math.sin(now * 2.1) * 0.6 + Math.sin(now * 3.7) * 0.3;
+    leaf.v += (-50 * leaf.a - 4 * leaf.v + breeze * 0.8 + drive * 0.5) * dt; leaf.a += leaf.v * dt; leaf.a = clamp(leaf.a, -0.2, 0.2);
+    // glows
+    headsetGlow = asleep ? 0.55 + 0.35 * Math.sin(now * 1.4) : 0.85 + 0.15 * Math.sin(now * 2.2);
+    if (!(seq && (seq.type === 'love' || seq.type === 'tablet'))) heartGlow = 1 + (asleep ? -0.3 : 0.12 * Math.max(0, Math.sin(now * 4.4)) * Math.max(0, Math.sin(now * 2.2)));
+    // Zzz
+    if (asleep && !rm && Math.floor(now / 1.5) !== Math.floor((now - dt) / 1.5)) {
+      const p = aLie > 0.5 ? mapLie(LIE_A.zzz.x, LIE_A.zzz.y) : mapPoint(A.zzz.x, A.zzz.y); spawn('z', p[0], p[1], 1);
+    }
+    // mesh
+    if (aSit > 0.001) {
+      const out = tmp;
+      for (let k = 0; k < NV; k++) {
+        deform(rest[k * 2], rest[k * 2 + 1], wHead[k], wDepth[k], wHorn[k], wLeaf[k], wHL[k], wHR[k], wTab[k], out);
+        pos[k * 2] = out[0]; pos[k * 2 + 1] = out[1];
+      }
+    }
+    if (aLie > 0.001) {
+      const b = P.breath, sy = 1 + b * 0.02, sx = 1 - b * 0.006, sway = Math.sin(now * TAU / 4.6 + 0.5) * 0.006;
+      for (let k = 0; k < NV; k++) {
+        let x = lrest[k * 2], y = lrest[k * 2 + 1];
+        const wh = wLHead[k];
+        if (wh > 0) { const dx = x - 450, dy = y - 560, c = Math.cos(sway * wh), s = Math.sin(sway * wh); x = 450 + dx * c - dy * s; y = 560 + dx * s + dy * c; }
+        lpos[k * 2] = LIE_A.ground.x + (x - LIE_A.ground.x) * sx; lpos[k * 2 + 1] = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
+      }
+    }
+    const fd = drawFace();
+    if (gl) drawGL(fd); else draw2D();
+    drawBack(); drawFront(dt);
+  }
+
+  // ---------------------------------------------------------------- loop, size, input
+  function loop(t) { raf = 0; if (dead || !ready || !visible) return; step(t); raf = requestAnimationFrame(loop); }
+  function kick() { if (!raf && ready && visible && !dead) { last = 0; raf = requestAnimationFrame(loop); } }
+  function resize() {
+    const r = host.getBoundingClientRect(); W = Math.max(1, r.width); H = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, opts.maxPixelRatio);
+    for (const c of [back, cv, front]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    S = Math.min(W / VIEW.w, H / VIEW.h); OX = (W - VIEW.w * S) / 2 - VIEW.x * S; OY = (H - VIEW.h * S) / 2 - VIEW.y * S;
+    if (gl) { gl.viewport(0, 0, cv.width, cv.height); }
+    faceSig = ''; kick();
+  }
+  const ro = new ResizeObserver(resize); ro.observe(host);
+  const io = typeof IntersectionObserver === 'function' ? new IntersectionObserver((es) => { visible = es[0].isIntersecting && !document.hidden; kick(); }) : null;
+  if (io) io.observe(host);
+  const onVis = () => { visible = !document.hidden; kick(); };
+  document.addEventListener('visibilitychange', onVis);
+  const onMove = (e) => {
+    if (!opts.lookAtPointer || mode !== 'awake' || (seq && seq.type === 'tablet')) return;
+    const r = host.getBoundingClientRect(); const c = toCss(mapPoint(478, 560));
+    look.tx = clamp((e.clientX - r.left - c[0]) / (r.width * 0.45), -1, 1);
+    look.ty = clamp((e.clientY - r.top - c[1]) / (r.height * 0.5), -0.6, 0.7);
+    pointerT = now;
+  };
+  window.addEventListener('pointermove', onMove, { passive: true });
+  const onDown = (e) => {
+    if (!opts.tap || !ready) return;
+    const r = host.getBoundingClientRect(), x = (e.clientX - r.left - OX) / S, y = (e.clientY - r.top - OY) / S;
+    if (mode === 'sleep') { if (!seq) goWake(); return; }
+    if (seq && seq.type !== 'tablet' && seq.type !== 'wiggle') return;
+    const onTab = x > A.tablet.x0 - 30 && x < A.tablet.x1 + 30 && y > A.tablet.y0 - 20 && y < A.tablet.y1 + 20;
+    if (onTab) play('love');
+    else if (x > 60 && x < 980 && y > 40 && y < 990) play('jump');
+  };
+  front.addEventListener('pointerdown', onDown);
+
+  // ---------------------------------------------------------------- load
+  const load = (n) => new Promise((res, rej) => { const im = new Image(); im.decoding = 'async'; im.onload = () => res(im); im.onerror = () => rej(new Error('narang2d: ' + n)); im.src = opts.assets + n + '.webp'; });
+  Promise.all([fetch(opts.assets + 'layout.json').then((r) => r.json()), ...['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].map(load)])
+    .then(([lay, ...ims]) => {
+      if (dead) return;
+      L = lay; buildLie(lay.sleep.w, lay.sleep.h); ['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].forEach((n, i) => { img[n] = ims[i]; });
+      if (gl) { try { initGL(); } catch (err) { console.warn('narang2d: WebGL failed, using 2D', err); gl = null; } }
+      if (!gl && !c2) { cv.remove(); const n = mk(1); host.insertBefore(n, front); c2 = n.getContext('2d'); }
+      if (mode === 'sleep') { P.droop = 1; }
+      ready = true; resize(); emit();
+      if (opts.onReady) opts.onReady(api);
+    })
+    .catch((err) => { console.error(err); host.dataset.narangError = '1'; });
+
+  // ---------------------------------------------------------------- api
+  const api = {
+    /** smile | laugh | wink | surprise | sad | love — stays until changed */
+    setExpression(name) {
+      if (!EXPRESSIONS[name] || name === 'sleep') return;
+      if (mode === 'sleep') { baseExpr = name; goWake(); return; }
+      baseExpr = name; if (!seq) setExpr(name);
+    },
+    jump() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('jump'); },
+    love() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('love'); },
+    lookAtTablet() { if (ready && mode === 'awake' && !seq) play('tablet'); },
+    wiggle() { if (ready && mode === 'awake' && !seq) play('wiggle'); },
+    /** mouth moves as if speaking (e.g. while a guide message is read out) */
+    talk(on) { talking = !!on; faceSig = ''; kick(); },
+    /** 'sit' (자기 1, 앉아서) | 'lie' (자기 2, 엎드려 · 밤 배경) */
+    sleep(kind = 'sit') { if (ready && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) goSleep(kind); },
+    wake() { if (ready && !seq) goWake(); },
+    /** look at a point given in -1..1 of the stage, or null to go back to idle looking */
+    lookAt(x, y) { if (x == null) { pointerT = -10; return; } look.tx = clamp(x, -1, 1); look.ty = clamp(y, -0.6, 0.7); pointerT = now + 1e6; },
+    setIdle(on) { opts.idle = !!on; },
+    setReducedMotion(on) { opts.reducedMotion = !!on; },
+    get state() { return { mode, pose, expression: baseExpr, busy: !!seq, talking }; },
+    get _debug() { return { blink, expr, prevExpr, exprT, aSit, aLie, night, look: { x: look.x, y: look.y } }; },
+    /** run the animation forward by `sec` seconds at 60 fps (tests, posters; works in a hidden tab) */
+    advance(sec) { if (!ready) return; let t = (last || performance.now()); for (let i = 0; i < Math.round(sec * 60); i++) { t += 1000 / 60; step(t); } },
+    /** PNG data URL of the character layers (for posters / checks) */
+    snapshot() {
+      const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; const x = c.getContext('2d');
+      step((last || performance.now()) + 1); x.drawImage(back, 0, 0); x.drawImage(cv, 0, 0); x.drawImage(front, 0, 0); return c.toDataURL('image/png');
+    },
+    dispose() {
+      if (dead) return; dead = true; cancelAnimationFrame(raf);
+      ro.disconnect(); if (io) io.disconnect(); document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pointermove', onMove); front.removeEventListener('pointerdown', onDown);
+      if (gl && prog) { for (const t of Object.values(tex)) gl.deleteTexture(t); for (const b of Object.values(buf)) gl.deleteBuffer(b); gl.deleteProgram(prog); }
+      back.remove(); cv.remove(); front.remove();
+    }
+  };
+  return api;
+}

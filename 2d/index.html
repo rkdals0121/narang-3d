@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>나랑이 2.5D</title>
+<meta name="description" content="나랑이 2.5D 모션 시제품: 원본 그림을 그대로 살려 숨쉬기, 표정, 점프, 잠들기를 움직입니다.">
+<style>
+  :root {
+    --bg1: #fffaf0; --bg2: #fff1c9; --ink: #3b2a12; --sub: #7a6440; --chip: #ffffff; --chip-ink: #3b2a12;
+    --chip-line: #efd79a; --chip-on: #ffc928; --card: rgba(255,255,255,0.7);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    background: radial-gradient(120% 80% at 50% 10%, var(--bg1), var(--bg2));
+    display: flex; flex-direction: column; align-items: center; padding: 16px 16px 28px;
+  }
+  h1 { font-size: 20px; margin: 4px 0 2px; letter-spacing: -0.02em; }
+  .sub { color: var(--sub); font-size: 13px; margin: 0 0 6px; text-align: center; }
+  #stage { width: min(100%, 460px); aspect-ratio: 960 / 1130; border-radius: 28px; overflow: hidden; transition: background 1s; }
+  .panel { width: min(100%, 560px); display: grid; gap: 10px; margin-top: 10px; }
+  .row { background: var(--card); border-radius: 18px; padding: 10px 12px; }
+  .row b { display: block; font-size: 12px; color: var(--sub); margin: 0 0 6px 2px; font-weight: 700; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  button {
+    font: inherit; font-size: 14px; font-weight: 600; color: var(--chip-ink); background: var(--chip);
+    border: 1.5px solid var(--chip-line); border-radius: 999px; padding: 8px 13px; cursor: pointer; min-height: 38px;
+    transition: transform .08s, background .15s;
+  }
+  button:active { transform: scale(0.95); }
+  button[aria-pressed="true"] { background: var(--chip-on); border-color: var(--chip-on); }
+  .foot { font-size: 12px; color: var(--sub); margin-top: 12px; text-align: center; line-height: 1.6; }
+  .foot a { color: inherit; }
+  .err { padding: 24px; text-align: center; color: var(--sub); }
+</style>
+</head>
+<body>
+  <h1>나랑이 2.5D</h1>
+  <p class="sub">나랑이를 누르면 점프, 태블릿을 누르면 하트가 나와요. 가만히 두면 혼자 놀아요.</p>
+  <div id="stage" aria-label="움직이는 나랑이"></div>
+
+  <div class="panel">
+    <div class="row"><b>표정</b><div class="chips" id="faces">
+      <button data-e="smile" aria-pressed="true">웃음</button>
+      <button data-e="laugh">크게 웃기</button>
+      <button data-e="wink">윙크</button>
+      <button data-e="surprise">놀람</button>
+      <button data-e="sad">슬픔</button>
+      <button data-e="love">하트 눈</button>
+    </div></div>
+    <div class="row"><b>동작</b><div class="chips">
+      <button id="jump">점프</button>
+      <button id="love">하트 뿅</button>
+      <button id="tablet">태블릿 보기</button>
+      <button id="wiggle">들썩들썩</button>
+      <button id="talk" aria-pressed="false">말하기</button>
+    </div></div>
+    <div class="row"><b>잠</b><div class="chips">
+      <button id="sleepSit">자기 1 (앉아서)</button>
+      <button id="sleepLie">자기 2 (엎드려)</button>
+      <button id="wake">깨우기</button>
+      <button id="idle" aria-pressed="true">혼자 놀기</button>
+    </div></div>
+  </div>
+  <p class="foot">시제품입니다. 원본 그림(4면 시트의 정면, 잠자는 그림)을 그대로 쓰고 부위별로 휘어서 움직입니다.<br>
+    <a href="../v3/">3D 버전 보기</a></p>
+
+<script type="module">
+  import { createNarang2D, canRender2D } from './narang2d.js?v=0.1';
+  const stage = document.getElementById('stage');
+  const n = createNarang2D(stage, {
+    assets: './assets/',
+    onChange: (s) => {
+      document.querySelectorAll('#faces button').forEach((b) => b.setAttribute('aria-pressed', String(s.mode === 'awake' && b.dataset.e === s.expression)));
+    }
+  });
+  window.narang = n;
+  document.querySelectorAll('#faces button').forEach((b) => b.addEventListener('click', () => {
+    n.setExpression(b.dataset.e);
+    document.querySelectorAll('#faces button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  const on = (id, f) => document.getElementById(id).addEventListener('click', f);
+  on('jump', () => n.jump());
+  on('love', () => n.love());
+  on('tablet', () => n.lookAtTablet());
+  on('wiggle', () => n.wiggle());
+  on('talk', (e) => { const p = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(p)); n.talk(p); });
+  on('sleepSit', () => n.sleep('sit'));
+  on('sleepLie', () => n.sleep('lie'));
+  on('wake', () => n.wake());
+  on('idle', (e) => { const p = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(p)); n.setIdle(p); });
+</script>
+</body>
+</html>
