@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<title>나랑이 원본 vs 3D 비교</title>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
+<style>
+  body { margin: 0; background: #fff; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; color: #2B2318; }
+  .grid { display: grid; grid-template-columns: 420px 420px; gap: 16px; padding: 16px; width: max-content; }
+  .cell { position: relative; width: 420px; height: 420px; overflow: hidden; background: #fff; border: 1px solid #eee; }
+  .cell img { position: absolute; }
+  canvas { display: block; width: 100%; height: 100%; }
+  h2 { margin: 0 0 6px; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div><h2>원본 그림 (나랑이.png 정면)</h2><div class="cell"><img id="o1" src="./ref/front.png" alt="원본 정면" style="left:0;top:0;width:420px;height:420px"></div></div>
+  <div><h2>3D v3 (웃음)</h2><div class="cell"><canvas id="a"></canvas></div></div>
+  <div><h2>원본 얼굴 확대</h2><div class="cell"><img id="o2" src="./ref/front.png" alt="원본 얼굴 확대"></div></div>
+  <div><h2>3D v3 얼굴 확대</h2><div class="cell"><canvas id="b"></canvas></div></div>
+</div>
+<script type="module">
+  import { createNarang } from './narang.js';
+  const common = { model: './models/narang_full.glb', mood: 'awake', reducedMotion: true, lookAtPointer: false, dragToRotate: false, tapToJump: false, background: '#ffffff' };
+  // face crop of the reference: same framing as the zoomed 3D view below
+  const o2 = document.getElementById('o2');
+  o2.style.width = '1000px'; o2.style.height = '1000px'; o2.style.left = '-290px'; o2.style.top = '-300px';
+  window.a = createNarang(document.getElementById('a'), Object.assign({ cameraDistance: 8.2, cameraTargetY: 0.05 }, common));
+  window.b = createNarang(document.getElementById('b'), Object.assign({ cameraDistance: 3.4, cameraTargetY: 0.25 }, common));
+</script>
+</body>
+</html>

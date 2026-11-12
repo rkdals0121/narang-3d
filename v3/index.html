@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>나랑이 3D v3</title>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+<style>
+  :root { --ink: #2B2318; --sub: #5E4E30; --line: #E3D8C0; --accent: #F7C51E; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    -webkit-tap-highlight-color: transparent; }
+  /* kiosk-like yellow gradient: the 3D canvas is transparent and sits on top of it */
+  body { background: linear-gradient(160deg, #FFF3C4 0%, #FFE07A 55%, #F9C93A 100%); min-height: 100dvh; display: flex; flex-direction: column; }
+  header { padding: calc(14px + env(safe-area-inset-top)) 20px 0; max-width: 1100px; width: 100%; margin: 0 auto; }
+  header p { margin: 0 0 2px; font-size: 13px; color: #7A5A12; font-weight: 700; }
+  h1 { margin: 0; font-size: 24px; }
+  #meta { margin: 4px 0 0; font-size: 12px; color: var(--sub); }
+  #stageWrap { display: flex; justify-content: center; padding: 4px 0; }
+  /* ~650px square on a 1920x1080 kiosk, 60% of the width on a portrait one */
+  #stage { position: relative; width: min(650px, 60vw, 92vw); aspect-ratio: 1 / 1; }
+  @media (max-width: 700px) { #stage { width: 92vw; } }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #poster { position: absolute; inset: 6%; width: 88%; height: 88%; object-fit: contain; }
+  #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; font-size: 15px; color: var(--sub); text-align: center; }
+  nav { width: 100%; max-width: 1100px; margin: 0 auto; padding: 6px 14px calc(14px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
+  .group { display: grid; gap: 5px; }
+  .label { margin: 0; font-size: 12px; font-weight: 700; color: var(--sub); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { min-height: 44px; padding: 0 14px; border-radius: 12px; border: 1.5px solid var(--line); background: rgba(255,255,255,0.92); color: #4A3D28;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--ink); color: var(--ink); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:focus-visible { outline: 3px solid #2B6CB0; outline-offset: 2px; }
+  .scene button { background: #fff; border-color: #C9A33A; }
+  @media (min-width: 900px) { nav { grid-template-columns: 1.3fr 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <p>ESG 공모전 본선 마스코트 · v3 시안</p>
+  <h1>나랑이 3D</h1>
+  <p id="meta">불러오는 중…</p>
+</header>
+<div id="stageWrap">
+  <div id="stage">
+    <canvas id="c" aria-label="나랑이 캐릭터 3D 모델" role="img"></canvas>
+    <img id="poster" alt="나랑이" hidden>
+    <p id="status">3D 모델 불러오는 중…</p>
+  </div>
+</div>
+<nav>
+  <div class="group scene">
+    <p class="label">키오스크 장면</p>
+    <div class="row">
+      <button type="button" data-scene="wait">① 탑승권 대기 (잠)</button>
+      <button type="button" data-scene="wake">② 터치 → 깨우기</button>
+      <button type="button" data-scene="guide">③ 안내 중 (웃음)</button>
+      <button type="button" data-scene="done">④ 완료 (점프·깔깔)</button>
+    </div>
+  </div>
+  <div class="group">
+    <p class="label">표정</p>
+    <div class="row">
+      <button type="button" data-expr="smile">웃음</button>
+      <button type="button" data-expr="laugh">깔깔</button>
+      <button type="button" data-expr="wink">윙크</button>
+      <button type="button" data-expr="surprise">놀람</button>
+      <button type="button" data-expr="sad">시무룩</button>
+    </div>
+  </div>
+  <div class="group">
+    <p class="label">동작</p>
+    <div class="row">
+      <button type="button" data-act="sit">자기 1 (앉아서)</button>
+      <button type="button" data-act="lie">자기 2 (엎드려)</button>
+      <button type="button" data-act="wake">깨우기</button>
+      <button type="button" data-act="jump">점프</button>
+      <button type="button" data-act="wave">손 흔들기</button>
+      <button type="button" data-act="auto" aria-pressed="false">빙글빙글</button>
+    </div>
+  </div>
+  <div class="group">
+    <p class="label">품질 · 접근성 (비교용)</p>
+    <div class="row">
+      <button type="button" data-q="lite" aria-pressed="true">경량 1.0MB</button>
+      <button type="button" data-q="full" aria-pressed="false">고화질 3.1MB</button>
+      <button type="button" id="rm" aria-pressed="false">움직임 줄이기 → 정지 그림</button>
+    </div>
+  </div>
+</nav>
+<script type="module">
+  import { createNarang, canRender3D } from './narang.js';
+
+  const MODELS = { lite: { url: './models/narang_lite.glb', label: '경량 · 삼각형 10만 · 1.0MB' }, full: { url: './models/narang_full.glb', label: '고화질 · 삼각형 37만 · 3.1MB' } };
+  const canvas = document.getElementById('c'), poster = document.getElementById('poster');
+  const statusEl = document.getElementById('status'), meta = document.getElementById('meta');
+  const $ = (s) => [...document.querySelectorAll(s)];
+  let n = null, quality = 'lite', mood = 'sleep', stillOnly = false, t0 = 0;
+  const osReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function showStill() {
+    if (n) { n.dispose(); n = null; }
+    canvas.hidden = true; statusEl.hidden = true; poster.hidden = false;
+    poster.src = mood === 'sleep' ? './posters/sleep.webp' : './posters/awake.webp';
+    meta.textContent = canRender3D() ? '움직임 줄이기: 정지 그림 표시 중' : '이 기기는 WebGL2를 지원하지 않아 정지 그림을 표시합니다';
+  }
+
+  function start() {
+    if (stillOnly || osReduce || !canRender3D()) return showStill();
+    if (n) n.dispose();
+    canvas.hidden = false; poster.hidden = true; statusEl.hidden = false; statusEl.textContent = '3D 모델 불러오는 중…';
+    t0 = performance.now();
+    n = createNarang(canvas, {
+      model: MODELS[quality].url, sleepModel: './models/sleep.glb', mood, sleepPose: 'sit',
+      onReady: () => { statusEl.hidden = true; meta.textContent = MODELS[quality].label + ' · 불러오기 ' + Math.round(performance.now() - t0) + 'ms'; },
+      onError: (e) => { statusEl.textContent = '모델을 불러오지 못했습니다: ' + e.message; },
+      onChange: (s) => { mood = s.mood; }
+    });
+    window.narang = n;
+  }
+
+  $('[data-scene]').forEach((b) => b.addEventListener('click', () => {
+    const s = b.dataset.scene;
+    if (stillOnly) { mood = s === 'wait' ? 'sleep' : 'awake'; return showStill(); }
+    if (!n) return;
+    if (s === 'wait') n.setMood('sleep');
+    else if (s === 'wake') n.wake();
+    else if (s === 'guide') n.setMood('awake');
+    else if (s === 'done') { n.setMood('awake'); setTimeout(() => { n.jump(); n.setMood('happy'); }, 50); }
+  }));
+  $('[data-expr]').forEach((b) => b.addEventListener('click', () => n && n.setExpression(b.dataset.expr)));
+  $('[data-act]').forEach((b) => b.addEventListener('click', () => {
+    if (!n) return;
+    const a = b.dataset.act;
+    if (a === 'sit' || a === 'lie') n.sleep(a);
+    else if (a === 'wake') n.wake();
+    else if (a === 'jump') n.jump();
+    else if (a === 'wave') n.wave();
+    else if (a === 'auto') { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(on)); n.setAutoRotate(on); }
+  }));
+  $('[data-q]').forEach((b) => b.addEventListener('click', () => {
+    quality = b.dataset.q; $('[data-q]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    stillOnly = false; document.getElementById('rm').setAttribute('aria-pressed', 'false');
+    start();   // disposes the old instance and builds a new one
+  }));
+  document.getElementById('rm').addEventListener('click', (e) => {
+    stillOnly = !stillOnly; e.currentTarget.setAttribute('aria-pressed', String(stillOnly)); start();
+  });
+  start();
+</script>
+</body>
+</html>
