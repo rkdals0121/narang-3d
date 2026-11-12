@@ -158,10 +158,11 @@ function drawCheek(ctx, x, y, rx, ry) {
 function drawFace(ctx, p, eyeMul) {
   ctx.clearRect(0, 0, FACE.px, FACE.px);
   for (const e of [F.eyeA, F.eyeB]) {
-    skinPatch(ctx, fx(e.z), fy(e.y), fl(F.eyeHW) * 1.35, fl(F.eyeHH) * 1.25);
+    skinPatch(ctx, fx(e.z), fy(e.y), fl(F.eyeHW) * 1.7, fl(F.eyeHH) * 1.4);
     skinPatch(ctx, fx(e.z), fy(F.browY + 0.02), fl(F.browHW) * 1.8, fl(0.05));
   }
   skinPatch(ctx, fx(F.mouth.z), fy(F.mouth.top - 0.03), fl(F.mouthHW) * 1.5, fl(0.05));
+  skinPatch(ctx, fx(0.035), fy(-0.06), fl(0.06), fl(0.07));   // bridge between the eyes
   drawNose(ctx, fx(F.nose.z), fy(F.nose.y), fl(F.nose.r));
   // cheeks sit a little lower and further out when asleep, as in the sleeping art
   const zz = Math.max(0, -p.sm);
@@ -551,11 +552,13 @@ export function createNarang(canvas, o = {}) {
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
 varying vec3 vRaw;
+varying vec3 vFaceN;
 uniform mat4 uRaw; uniform mat4 uRawInv; uniform float uWave; uniform float uWaveT;`)
         .replace('#include <begin_vertex>', `vec3 transformed = vec3( position );
 {
   vec3 p = (uRaw * vec4(position, 1.0)).xyz;   // undo mesh quantization -> model space
   vRaw = p;
+  vFaceN = normalize(normalMatrix * vec3(1.0, -0.25, 0.0));   // face-front direction, used to even out the filled mouth
   if (uWave > 0.001) {
     vec3 c = vec3(${HAND.x.toFixed(3)}, ${HAND.y.toFixed(3)}, ${HAND.z.toFixed(3)});
     float w = (1.0 - smoothstep(0.045, ${HAND.r.toFixed(3)}, distance(p, c))) * smoothstep(0.1, 0.15, p.z);
@@ -571,6 +574,7 @@ uniform mat4 uRaw; uniform mat4 uRawInv; uniform float uWave; uniform float uWav
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 varying vec3 vRaw;
+varying vec3 vFaceN;
 uniform sampler2D faceMap;`)
         .replace('#include <map_fragment>', `#include <map_fragment>
 float faceGloss = 0.0;
@@ -602,6 +606,16 @@ float coatMask = 0.0;
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 roughnessFactor = mix(roughnessFactor, 0.15, faceGloss);
 roughnessFactor = mix(roughnessFactor, 0.35, coatMask);`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  // the filled mouth cavity has folded triangles facing different ways; shade it as one smooth face surface
+  float mw = (1.0 - smoothstep(0.06, 0.1, abs(vRaw.z - 0.03))) * (1.0 - smoothstep(0.05, 0.085, abs(vRaw.y + 0.15)));
+  // same for the two eye areas (and the strip between them), which were filled too
+  // the whole filled centre of the face (eyes, bridge, mouth); edges keep the model's own curvature
+  float fc = 1.0 - smoothstep(0.65, 1.0, length(vec2((vRaw.z - 0.035) / 0.25, (vRaw.y + 0.08) / 0.16)));
+  mw = max(mw, fc * 0.9) * step(0.18, vRaw.x);
+  normal = normalize(mix(normal, normalize(vFaceN), mw));
+}`)
         .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
 #ifdef USE_CLEARCOAT
   material.clearcoat *= coatMask;

@@ -10,9 +10,9 @@
 | 파일 | 내용 | 크기 |
 |---|---|---|
 | `narang.js` | 뷰어 모듈 (`createNarang`, `canRender3D`, `EXPRESSIONS`) | 38KB |
-| `models/narang_lite.glb` | 앉은 모델 경량판: 삼각형 10만, 텍스처 1024 WebP, meshopt | 1.12MB |
-| `models/narang_full.glb` | 앉은 모델 고화질판: 삼각형 37만, 텍스처 2048 WebP, meshopt | 3.34MB |
-| `models/sleep.glb` | 엎드린 모델: 삼각형 1.6만, WebP, meshopt | 0.26MB |
+| `models/narang_lite.glb` | 앉은 모델 경량판: 삼각형 10만, 텍스처 1024 WebP, meshopt | 1.06MB |
+| `models/narang_full.glb` | 앉은 모델 고화질판: 삼각형 37만, 텍스처 2048 WebP, meshopt | 3.16MB |
+| `models/sleep.glb` | 엎드린 모델: 삼각형 1.6만, WebP, meshopt | 0.27MB |
 | `posters/awake.webp`, `posters/sleep.webp` | WebGL이 없거나 움직임 줄이기일 때 쓸 정지 그림 (투명 배경) | 37KB / 81KB |
 | `compare/` | 원본 그림과 3D 비교 캡처, 손 흔들기 캡처 | |
 | `vendor/three/` | 데모 페이지용 three 0.187.0 (웹앱에서는 npm `three`를 씀) | |
@@ -139,6 +139,19 @@ export default function Narang3D({ mood }: { mood: 'sleep' | 'awake' | 'happy' }
 바뀐 파일: `narang.js`, `models/narang_lite.glb` (1.12MB), `models/narang_full.glb` (3.34MB), `models/sleep.glb` (0.26MB).
 
 남은 한계: 잔 굴곡은 줄었지만 얼굴의 큰 굴곡(넓은 울퉁불퉁함)은 생성된 형태 자체라 남아 있습니다. 이걸 없애려면 Blender에서 다시 면을 짜거나(리메시) 모델을 새로 만들어야 합니다.
+
+## v3.4 (감귤 껍질 느낌 줄이기)
+
+비교: `compare/v34_vs_v33.png` (경량 모델, 같은 조건: 전신 / 상반신 / 얼굴 확대 / 잠든 얼굴)
+
+v3.3에서 남은 오톨도톨함(감귤 껍질 느낌)의 원인과 처리:
+
+1. **거칠기 지도의 잡티**: 광택을 올리자 생성 모델의 거칠기 지도(roughness map) 잡티가 반짝임 얼룩으로 드러났습니다. 거칠기 지도를 빼고 거칠기를 0.55로 고르게 했습니다.
+2. **색 텍스처 잡티**: 경계(줄무늬·로고)는 지키고 잡티만 지우는 필터(bilateral)로 두 번 정리했습니다.
+3. **잔 굴곡**: 표면 다듬기를 10회에서 25회로 늘렸습니다.
+4. **얼굴 중앙의 접힌 면**: 눈·입을 메운 자리에 겹친 면이 있어 입 안의 가는 금과 코 옆 흰 점으로 보였습니다. 셰이더에서 얼굴 중앙(가장자리로 갈수록 약하게)은 얼굴 정면 방향으로 고르게 비추고, 그 자리에는 틈새 그림자를 굽지 않게 했습니다.
+
+바뀐 파일: `narang.js`, `models/narang_lite.glb` (1.06MB), `models/narang_full.glb` (3.16MB), `models/sleep.glb` (0.27MB).
 
 ## 한계
 
