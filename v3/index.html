@@ -119,7 +119,7 @@
     canvas.hidden = false; poster.hidden = true; statusEl.hidden = false; statusEl.textContent = '3D 모델 불러오는 중…';
     t0 = performance.now();
     n = createNarang(canvas, {
-      model: MODELS[quality].url, sleepModel: './models/sleep.glb', mood, sleepPose: 'sit',
+      model: MODELS[quality].url, sleepModel: './models/sleep.glb?v=3.3', mood, sleepPose: 'sit',
       onReady: () => { statusEl.hidden = true; meta.textContent = MODELS[quality].label + ' · 불러오기 ' + Math.round(performance.now() - t0) + 'ms'; },
       onError: (e) => { statusEl.textContent = '모델을 불러오지 못했습니다: ' + e.message; },
       onChange: (s) => { mood = s.mood; }
