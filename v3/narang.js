@@ -272,10 +272,10 @@ export function createNarang(canvas, o = {}) {
   // key light from the upper left like the illustration, soft fill from the right, little flat ambient
   // Values fitted against the illustration's face / hood colours (see compare.html).
   // Note: in three r16x+ the scene environment is scaled by scene.environmentIntensity, not material.envMapIntensity.
-  scene.environmentIntensity = 0.95;
+  scene.environmentIntensity = 0.9;
   const hemi = new THREE.HemisphereLight(0xffffff, 0xcdbfa8, 0.1); scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(-3, 5, 4); scene.add(key);
-  const fill = new THREE.DirectionalLight(0xffffff, 0.25); fill.position.set(4, 0.5, 3); scene.add(fill);
+  const key = new THREE.DirectionalLight(0xffffff, 1.05); key.position.set(-2, 6.5, 3.5); scene.add(key);   // higher: forehead light, chin a little darker, as in the art
+  const fill = new THREE.DirectionalLight(0xffffff, 0.2); fill.position.set(4, 0.5, 3); scene.add(fill);
   const rim = new THREE.DirectionalLight(0xfff6e0, 0.7); rim.position.set(1.5, 3, -5); scene.add(rim);   // soft-vinyl edge light (tuned below)
 
   const root = new THREE.Group(); scene.add(root);       // yaw (drag / view)
@@ -558,7 +558,14 @@ uniform mat4 uRaw; uniform mat4 uRawInv; uniform float uWave; uniform float uWav
 {
   vec3 p = (uRaw * vec4(position, 1.0)).xyz;   // undo mesh quantization -> model space
   vRaw = p;
-  vFaceN = normalize(normalMatrix * vec3(1.0, -0.25, 0.0));   // face-front direction, used to even out the filled mouth
+  {
+    // normal of a smooth cubic surface fitted to the face skin (x = f(y, z)); used where eyes / mouth were filled,
+    // so that area shades round and clean instead of flat
+    float y = p.y, z = p.z;
+    float dxdy = -0.09546 + 2.0 * -0.02022 * y + -0.13298 * z + 3.0 * 3.072 * y * y + 2.0 * -0.3765 * y * z + 1.17503 * z * z;
+    float dxdz = 0.0784 + 2.0 * -1.09165 * z + -0.13298 * y + 3.0 * -0.07482 * z * z + -0.3765 * y * y + 2.0 * 1.17503 * y * z;
+    vFaceN = normalize(normalMatrix * normalize(vec3(1.0, -dxdy, -dxdz)));
+  }
   if (uWave > 0.001) {
     vec3 c = vec3(${HAND.x.toFixed(3)}, ${HAND.y.toFixed(3)}, ${HAND.z.toFixed(3)});
     float w = (1.0 - smoothstep(0.045, ${HAND.r.toFixed(3)}, distance(p, c))) * smoothstep(0.1, 0.15, p.z);
