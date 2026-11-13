@@ -111,6 +111,10 @@ export function createNarang2D(host, o = {}) {
   let lastHeadX = 0, lastHeadV = 0;
   const P = { breath: 0, sq: 0, jy: 0, sway: 0, head: 0, hx: 0, hy: 0, tap: 0, tapL: 0, tapR: 0, arms: 0, droop: 0, nod: 0, shk: 0 };
   let lieS = 1, lieDY = 0;   // the lying art pops in / sinks out
+  // poses: separate pictures (wave, cheer, point, think, surprise) that the character pops between
+  let PZ = null; const pz = {};                       // poses.json and per-pose mesh / texture
+  let poseCur = 'idle', posePrev = 'idle', poseT0 = -10, poseHoldEnd = 0;
+  let LSQ = 0, LJY = 0, puffDone = true;                               // squash / hop of the layer being drawn (pose pop)
   let aSit = pose === 'lie' ? 0 : 1, aLie = pose === 'lie' ? 1 : 0, night = pose === 'lie' ? 1 : 0;
   let heartGlow = 1, headsetGlow = 1, now = 0;
   const parts = [];
@@ -179,11 +183,70 @@ export function createNarang2D(host, o = {}) {
       px += (qx - px) * wh; py += (qy - py) * wh;
     }
     // whole body: breathing, squash and stretch, jump, sway
-    const sy = 1 + P.breath * 0.012 - P.sq, sx = 1 - P.breath * 0.006 + P.sq * 0.6;
+    return body(px, py, out);
+  }
+  function body(px, py, out) {
+    const q = P.sq + LSQ, sy = 1 + P.breath * 0.012 - q, sx = 1 - P.breath * 0.006 + q * 0.6;
     let dx = (px - A.ground.x) * sx, dy = (py - A.ground.y) * sy;
     if (P.sway) { const c = Math.cos(P.sway), s = Math.sin(P.sway); const ex = dx * c - dy * s; dy = dx * s + dy * c; dx = ex; }
-    out[0] = A.ground.x + dx; out[1] = A.ground.y + dy + P.jy;
+    out[0] = A.ground.x + dx; out[1] = A.ground.y + dy + P.jy + LJY;
     return out;
+  }
+
+  // ---------------------------------------------------------------- poses
+  function buildPose(name, d, im) {
+    const N = (GRID + 1) * (GRID + 1), rest = new Float32Array(N * 2), wh = new Float32Array(N);
+    const wl = d.limbs.map(() => new Float32Array(N));
+    for (let j = 0; j <= GRID; j++) for (let i = 0; i <= GRID; i++) {
+      const k = j * (GRID + 1) + i, x = d.x + (i / GRID) * d.w, y = d.y + (j / GRID) * d.h;
+      rest[k * 2] = x; rest[k * 2 + 1] = y;
+      wh[k] = 1 - smooth(d.neck[1] - 120, d.neck[1] - 10, y);
+      d.limbs.forEach((l, n) => { wl[n][k] = limbW(l, x, y); });
+    }
+    pz[name] = { d, im, rest, pos: new Float32Array(N * 2), wh, wl, tex: null };
+  }
+  function limbW(l, x, y) { const e = Math.hypot((x - l.c[0]) / l.r[0], (y - l.c[1]) / l.r[1]); return 1 - smooth(0.8, 1.3, e); }
+  function poseAge() { return now - poseT0; }
+  function poseNames() { return posePrev === poseCur ? [poseCur] : [posePrev, poseCur]; }
+  // pop between poses: the old one squashes and vanishes, the new one appears squashed, springs up and settles
+  function layerOf(name) {
+    const t = poseAge();
+    if (name === poseCur) {
+      const u = t - 0.1;
+      if (t > 1.2) return { a: 1, sq: 0, jy: 0 };
+      return { a: t >= 0.1 ? 1 : 0, sq: u < 0 ? 0.1 : 0.1 * Math.cos(u * 14) * Math.exp(-u * 6), jy: u < 0 ? 0 : -24 * Math.sin(PI * clamp(u / 0.3, 0, 1)) };
+    }
+    if (name === posePrev && t < 0.1) return { a: 1, sq: 0.1 * easeOut(clamp(t / 0.11, 0, 1)), jy: 0 };
+    return null;
+  }
+  function deformPose(z, x, y, wh, k, out) {
+    const d = z.d, t = poseAge(), amt = poseCur === z.d.name ? smooth(0.25, 0.6, t) : 1;
+    let px = x, py = y;
+    d.limbs.forEach((l, n) => {
+      const w = k >= 0 ? z.wl[n][k] : limbW(l, x, y); if (w <= 0) return;
+      const ph = TAU * l.hz * now + l.phase;
+      if (l.kind === 'rot') {
+        const a = l.amp * Math.sin(ph) * amt * w, c = Math.cos(a), s = Math.sin(a), dx = px - l.pivot[0], dy = py - l.pivot[1];
+        px = l.pivot[0] + dx * c - dy * s; py = l.pivot[1] + dx * s + dy * c;
+      } else { const m = l.amp * (0.5 + 0.5 * Math.sin(ph)) * amt * w; px += l.dir[0] * m; py += l.dir[1] * m; }
+    });
+    if (wh > 0) {
+      const a = (P.head * 0.7 + (d.tilt || 0) * Math.sin(now * 1.3) + look.x * 0.03 - P.shk * 0.04) * wh, c = Math.cos(a), s = Math.sin(a);
+      const dx = px - d.neck[0], dy = py - d.neck[1];
+      px = d.neck[0] + dx * c - dy * s + (look.x * 10 + P.shk * 14) * wh; py = d.neck[1] + dx * s + dy * c + (look.y * 7 + P.nod * 12) * wh;
+    }
+    return body(px, py, out);
+  }
+  function mapPose(name, x, y) { const z = pz[name]; return deformPose(z, x, y, 1 - smooth(z.d.neck[1] - 120, z.d.neck[1] - 10, y), -1, [0, 0]); }
+  function switchPose(name, instant) {
+    if (name === poseCur) return;
+    posePrev = instant ? name : (poseAge() < 0.1 ? posePrev : poseCur); poseCur = name; poseT0 = instant ? now - 10 : now; puffDone = !!instant;
+    if (!instant) hornKick(name === 'idle' ? 1.5 : -2.5);
+    faceSig = ''; kick();
+  }
+  function setPose(name, hold) {
+    if (!(name === 'idle' || pz[name]) || mode !== 'awake') return false;
+    switchPose(name); poseHoldEnd = hold ? now + hold : 0; emit(); return true;
   }
   const tmp = [0, 0];
   function mapPoint(x, y) {   // an art point through the current deformation
@@ -218,7 +281,7 @@ export function createNarang2D(host, o = {}) {
     gl.useProgram(prog);
     for (const n of ['uView', 'uRes', 'uTex', 'uFace', 'uFR', 'uUseFace', 'uAlpha']) U[n] = gl.getUniformLocation(prog, n);
     U.aPos = gl.getAttribLocation(prog, 'aPos'); U.aUV = gl.getAttribLocation(prog, 'aUV');
-    buf.pos = gl.createBuffer(); buf.lpos = gl.createBuffer(); buf.uv = gl.createBuffer(); buf.idx = gl.createBuffer();
+    buf.pos = gl.createBuffer(); buf.ppos = gl.createBuffer(); buf.lpos = gl.createBuffer(); buf.uv = gl.createBuffer(); buf.idx = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf.uv); gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
@@ -233,6 +296,7 @@ export function createNarang2D(host, o = {}) {
       return t;
     };
     tex.base = mkTex(img.base); tex.sleep = mkTex(img.sleep);
+    for (const n in pz) pz[n].tex = mkTex(pz[n].im);
     tex.face = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex.face);
     for (const [p, v] of [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, face);
@@ -256,13 +320,24 @@ export function createNarang2D(host, o = {}) {
       gl.uniform1f(U.uUseFace, 0); gl.uniform1f(U.uAlpha, aLie);
       gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
     }
-    if (aSit > 0.001) {
+    const li = layerOf('idle');
+    if (aSit > 0.001 && li) {
       gl.uniform3f(U.uView, S, OX, OY);
       gl.bindBuffer(gl.ARRAY_BUFFER, buf.pos); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(U.aPos); gl.vertexAttribPointer(U.aPos, 2, gl.FLOAT, false, 0, 0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.base);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex.face);
-      gl.uniform1f(U.uUseFace, 1); gl.uniform1f(U.uAlpha, aSit);
+      gl.uniform1f(U.uUseFace, 1); gl.uniform1f(U.uAlpha, aSit * li.a);
+      gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+    for (const n of poseNames()) {
+      if (n === 'idle' || !pz[n]) continue;
+      const lay = layerOf(n); if (!lay || aSit <= 0.001) continue;
+      gl.uniform3f(U.uView, S, OX, OY);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.ppos); gl.bufferData(gl.ARRAY_BUFFER, pz[n].pos, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(U.aPos); gl.vertexAttribPointer(U.aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pz[n].tex);
+      gl.uniform1f(U.uUseFace, 0); gl.uniform1f(U.uAlpha, aSit * lay.a);
       gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
     }
   }
@@ -278,7 +353,9 @@ export function createNarang2D(host, o = {}) {
     if (aSit > 0.001) {
       c2.save(); c2.globalAlpha = aSit;
       c2.translate(OX + A.ground.x * S, OY + (A.ground.y + P.jy) * S); c2.scale(S * sx, S * sy); c2.translate(-A.ground.x, -A.ground.y);
-      c2.drawImage(img.base, 0, 0); c2.drawImage(face, FR.x, FR.y); c2.restore();
+      if (poseCur === 'idle' || !pz[poseCur]) { c2.drawImage(img.base, 0, 0); c2.drawImage(face, FR.x, FR.y); }
+      else { const d = pz[poseCur].d; c2.drawImage(pz[poseCur].im, d.x, d.y, d.w, d.h); }
+      c2.restore();
     }
   }
 
@@ -410,6 +487,7 @@ export function createNarang2D(host, o = {}) {
       else if (type === 'heart') parts.push({ type, x: x + rand(-40, 40), y, vx: rand(-70, 70), vy: rand(-260, -160), life: rand(1.1, 1.6), age: 0, s: rand(18, 30), r: rand(-0.3, 0.3), c: Math.random() < 0.6 ? '#9BE15D' : '#FF7A8A' });
       else if (type === 'z') parts.push({ type, x, y, vx: rand(40, 70), vy: rand(-70, -50), life: 2.6, age: 0, s: rand(30, 40), r: rand(-0.2, 0.1), c: '#8A6A3A' });
       else if (type === 'note') parts.push({ type, x, y, vx: rand(30, 80), vy: rand(-120, -80), life: 1.6, age: 0, s: 34, r: 0, c: '#E0A800' });
+      else if (type === 'q' || type === 'ex') parts.push({ type, x, y, vx: 0, vy: -40, life: 1.8, age: 0, s: 84, r: type === 'q' ? 0.15 : -0.1, c: type === 'q' ? '#3D8BFF' : '#FF5A5A' });
     }
   }
   function drawStar(ctx, x, y, s, r) {
@@ -453,10 +531,35 @@ export function createNarang2D(host, o = {}) {
   function drawFront(dt) {
     fx.setTransform(dpr, 0, 0, dpr, 0, 0); fx.clearRect(0, 0, W, H);
     // glowing headset and tablet heart
-    if (aSit > 0.01) {
-      glow(fx, mapPoint(A.headset.x, A.headset.y), 95, '150,240,60', headsetGlow * aSit * 0.9, 0.55, 1);
-      const hb = heartGlow; glow(fx, mapPoint(A.heart.x, A.heart.y), 70 + 18 * (hb - 1), '160,255,80', hb * aSit * 0.75);
+    const li = layerOf('idle');
+    if (aSit > 0.01 && li) {
+      LSQ = li.sq; LJY = li.jy;
+      glow(fx, mapPoint(A.headset.x, A.headset.y), 95, '150,240,60', headsetGlow * aSit * li.a * 0.9, 0.55, 1);
+      const hb = heartGlow; glow(fx, mapPoint(A.heart.x, A.heart.y), 70 + 18 * (hb - 1), '160,255,80', hb * aSit * li.a * 0.75);
     }
+    for (const n of [poseCur]) {
+      const z = pz[n], lay = n !== 'idle' && z && layerOf(n);
+      if (!lay || aSit <= 0.01) continue;
+      LSQ = lay.sq; LJY = lay.jy; const d = z.d, a = aSit * lay.a;
+      glow(fx, mapPose(n, d.headset[0], d.headset[1]), 90, '150,240,60', headsetGlow * a * 0.9, 0.55, 1);
+      if (d.heart) glow(fx, mapPose(n, d.heart[0], d.heart[1]), 68, '160,255,80', heartGlow * a * 0.75);
+      if (blink < 0.985) for (const e of d.eyes) {   // eyelid closing over the painted eye
+        const c = toCss(mapPose(n, e.x, e.y)), rx = e.rx * S, ry = e.ry * S, lid = c[1] - ry * 1.12 + ry * 2.24 * (1 - blink);
+        // the lid: skin colour of the face around the eye, with a soft rim so no hard oval shows
+        // the lid: the skin patch painted under this eye (made at build time), uncovered from the top down
+        if (z.lids) {
+          const m = 16, sx = e.x - d.x - e.rx - m, sy = e.y - d.y - e.ry - m, sw = (e.rx + m) * 2, sh = (e.ry + m) * 2;
+          fx.save(); fx.globalAlpha = a; fx.beginPath(); fx.rect(c[0] - sw * S, c[1] - sh * S, sw * 2 * S, lid - (c[1] - sh * S)); fx.clip();
+          fx.drawImage(z.lids, sx, sy, sw, sh, c[0] - sw / 2 * S, c[1] - sh / 2 * S, sw * S, sh * S);
+          fx.restore();
+        }
+        fx.save(); fx.globalAlpha = a; fx.strokeStyle = '#3A1E0C'; fx.lineCap = 'round'; fx.lineWidth = Math.max(1.5, ry * 0.11);
+        const hw = rx * Math.sqrt(Math.max(0, 1 - ((lid - c[1]) / (ry * 1.12)) ** 2)) * 1.05;
+        if (hw > 1) { fx.beginPath(); fx.moveTo(c[0] - hw, lid); fx.quadraticCurveTo(c[0], lid + ry * 0.16 * (1 - blink), c[0] + hw, lid); fx.stroke(); }
+        fx.restore();
+      }
+    }
+    LSQ = 0; LJY = 0;
     if (aLie > 0.01) glow(fx, mapLie(LIE_A.headset.x, LIE_A.headset.y), 80, '150,240,60', headsetGlow * aLie * 0.8, 0.6, 1);
     // particles
     for (let i = parts.length - 1; i >= 0; i--) {
@@ -472,11 +575,11 @@ export function createNarang2D(host, o = {}) {
       fx.save(); fx.globalAlpha = a; fx.fillStyle = p.c;
       if (p.type === 'spark') drawStar(fx, x, y, sz * (u < 0.2 ? u / 0.2 : 1), p.r + p.age * 3);
       else if (p.type === 'heart') { heartPath(fx, x, y, sz * 0.6 * Math.min(1, u * 5)); fx.fill(); }
-      else if (p.type === 'z' || p.type === 'note') {
-        fx.translate(x, y); fx.rotate(p.r); const s = sz * (0.6 + u * 0.7);
+      else if (p.type === 'z' || p.type === 'note' || p.type === 'q' || p.type === 'ex') {
+        fx.translate(x, y); fx.rotate(p.r); const s = sz * (p.type === 'q' || p.type === 'ex' ? Math.min(1, 0.4 + u * 6) * (1 + 0.06 * Math.sin(p.age * 12)) : 0.6 + u * 0.7);
         fx.font = `900 ${s}px "Arial Rounded MT Bold","Pretendard",system-ui,sans-serif`; fx.textAlign = 'center'; fx.textBaseline = 'middle';
         fx.lineWidth = s * 0.16; fx.strokeStyle = night > 0.5 ? 'rgba(20,24,60,0.9)' : 'rgba(255,255,255,0.95)'; fx.lineJoin = 'round';
-        const t = p.type === 'z' ? 'Z' : '♪'; fx.strokeText(t, 0, 0); fx.fillStyle = night > 0.5 ? '#FFE9A8' : p.c; fx.fillText(t, 0, 0);
+        const t = p.type === 'z' ? 'Z' : p.type === 'note' ? '♪' : p.type === 'q' ? '?' : '!'; fx.strokeText(t, 0, 0); fx.fillStyle = night > 0.5 ? '#FFE9A8' : p.c; fx.fillText(t, 0, 0);
       }
       fx.restore();
     }
@@ -590,6 +693,7 @@ export function createNarang2D(host, o = {}) {
 
   function goSleep(kind) {
     kind = kind === 'lie' ? 'lie' : 'sit';
+    if (poseCur !== 'idle') { switchPose('idle', true); poseHoldEnd = 0; }
     if (mode === 'sleep' && pose === kind) return;
     if (mode === 'sleep' && pose === 'sit' && kind === 'lie') { pose = 'lie'; play('toLie', emit); return; }
     if (mode === 'sleep' && pose === 'lie' && kind === 'sit') { pose = 'sit'; play('fromLie', emit); return; }
@@ -611,9 +715,9 @@ export function createNarang2D(host, o = {}) {
       if (idleLookT <= 0) { idleLookT = rand(1.8, 4.2); const c = Math.random() < 0.35; look.tx = c ? 0 : rand(-0.7, 0.7); look.ty = c ? 0 : rand(-0.35, 0.35); }
     }
     if (idleNext <= 0) {
-      idleNext = rand(6, 11);
+      idleNext = rand(6, 11); if (poseCur !== 'idle') return;
       const r = Math.random();
-      if (r < 0.32) play('tablet'); else if (r < 0.55) play('wiggle'); else if (r < 0.65) play('nod'); else if (r < 0.75) play('hello'); else if (r < 0.87) { setExpr('wink'); setTimeout(() => { if (expr === 'wink' && !seq) setExpr(baseExpr); }, 900); } else play('jump');
+      if (r < 0.14 && pz.wave) setPose('wave', 2.2); else if (r < 0.24 && pz.think) { setPose('think', 2.4); const p = mapPose('think', 560, 60); spawn('q', p[0], p[1], 1); } else if (r < 0.4) play('tablet'); else if (r < 0.55) play('wiggle'); else if (r < 0.65) play('nod'); else if (r < 0.75) play('hello'); else if (r < 0.87) { setExpr('wink'); setTimeout(() => { if (expr === 'wink' && !seq) setExpr(baseExpr); }, 900); } else play('jump');
     }
   }
 
@@ -623,6 +727,12 @@ export function createNarang2D(host, o = {}) {
     const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016); last = t; now += dt;
     const rm = opts.reducedMotion;
     runSeq(); idle(dt);
+    if (poseCur !== 'idle' && poseHoldEnd && now > poseHoldEnd) { poseHoldEnd = 0; switchPose('idle'); emit(); }
+    if (posePrev !== poseCur && poseAge() >= 0.1 && !puffDone) {   // the swap: a little puff hides the cut
+      puffDone = true; const c = poseCur !== 'idle' && pz[poseCur] ? mapPose(poseCur, pz[poseCur].d.neck[0], pz[poseCur].d.neck[1] - 150) : mapPoint(480, 600);
+      if (!opts.reducedMotion) for (let i = 0; i < 5; i++) spawn('spark', c[0] + rand(-300, 300), c[1] + rand(-280, 120), 1);
+    }
+    if (posePrev !== poseCur && poseAge() > 0.2) posePrev = poseCur;
     // expression crossfade and smoothed numbers
     exprT = Math.min(1, exprT + dt / 0.16);
     const E = EXPRESSIONS[expr], kk = 1 - Math.exp(-dt * 14);
@@ -668,7 +778,14 @@ export function createNarang2D(host, o = {}) {
       const p = aLie > 0.5 ? mapLie(LIE_A.zzz.x, LIE_A.zzz.y) : mapPoint(A.zzz.x, A.zzz.y); spawn('z', p[0], p[1], 1);
     }
     // mesh
-    if (aSit > 0.001) {
+    for (const n of poseNames()) {   // pose meshes
+      const z = pz[n], lay = n !== 'idle' && z && layerOf(n);
+      if (!lay || aSit <= 0.001) continue;
+      LSQ = lay.sq; LJY = lay.jy;
+      for (let k = 0; k < NV; k++) { deformPose(z, z.rest[k * 2], z.rest[k * 2 + 1], z.wh[k], k, tmp); z.pos[k * 2] = tmp[0]; z.pos[k * 2 + 1] = tmp[1]; }
+    }
+    const lIdle = layerOf('idle'); LSQ = lIdle ? lIdle.sq : 0; LJY = lIdle ? lIdle.jy : 0;
+    if (aSit > 0.001 && lIdle) {
       const out = tmp;
       for (let k = 0; k < NV; k++) {
         deform(rest[k * 2], rest[k * 2 + 1], wHead[k], wDepth[k], wHorn[k], wLeaf[k], wHL[k], wHR[k], wTab[k], wSet[k], out);
@@ -710,7 +827,7 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
     if (n !== say.shown) { say.shown = n; say.vis.textContent = say.text.slice(0, n); }
     sayTalk = n < say.text.length && el < say.typeEnd;
     // place it over the head, inside the stage
-    const a = aLie > 0.5 ? toCss(lieToArt(300, 160)) : toCss(mapPoint(470, 120));
+    const a = aLie > 0.5 ? toCss(lieToArt(300, 160)) : poseCur !== 'idle' && pz[poseCur] ? toCss(mapPose(poseCur, pz[poseCur].d.neck[0] - 60, pz[poseCur].d.y + 90)) : toCss(mapPoint(470, 120));
     const bw = bubble.offsetWidth || 120, left = clamp(a[0], bw / 2 + 6, W - bw / 2 - 6), top = Math.max(a[1], (bubble.offsetHeight || 40) + 14);
     bubble.style.left = left + 'px'; bubble.style.top = top + 'px';
     bubble.style.setProperty('--tail', clamp(a[0] - left + bw / 2, 22, bw - 22) + 'px');
@@ -774,10 +891,12 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
 
   // ---------------------------------------------------------------- load
   const load = (n) => new Promise((res, rej) => { const im = new Image(); im.decoding = 'async'; im.onload = () => res(im); im.onerror = () => rej(new Error('narang2d: ' + n)); im.src = opts.assets + n + '.webp'; });
-  Promise.all([fetch(opts.assets + 'layout.json').then((r) => r.json()), ...['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].map(load)])
-    .then(([lay, ...ims]) => {
+  Promise.all([fetch(opts.assets + 'layout.json').then((r) => r.json()), fetch(opts.assets + 'poses.json').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((j) => (j ? Promise.all(Object.entries(j).map(([n, d]) => new Promise((res) => { const im = new Image(); im.onload = () => { if (!d.lids) return res([n, d, im, null]); const lm = new Image(); lm.onload = () => res([n, d, im, lm]); lm.onerror = () => res([n, d, im, null]); lm.src = opts.assets + d.lids; }; im.onerror = () => res(null); im.src = opts.assets + d.img; }))) : [])), ...['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].map(load)])
+    .then(([lay, poseList, ...ims]) => {
       if (dead) return;
-      L = lay; buildLie(lay.sleep.w, lay.sleep.h); ['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].forEach((n, i) => { img[n] = ims[i]; });
+      L = lay; buildLie(lay.sleep.w, lay.sleep.h);
+      for (const e of poseList) if (e) { e[1].name = e[0]; buildPose(e[0], e[1], e[2]); pz[e[0]].lids = e[3]; } ['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].forEach((n, i) => { img[n] = ims[i]; });
       if (gl) { try { initGL(); } catch (err) { console.warn('narang2d: WebGL failed, using 2D', err); gl = null; } }
       if (!gl && !c2) { cv.remove(); const n = mk(1); host.insertBefore(n, front); c2 = n.getContext('2d'); }
       if (mode === 'sleep') { P.droop = 1; }
@@ -823,7 +942,20 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
     },
     nod() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('nod'); },
     shake() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('shake'); },
-    hello() { if (ready && mode === 'awake' && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('hello'); },
+    hello(text) {
+      if (!ready || mode !== 'awake') return;
+      if (pz.wave) { setPose('wave', text ? Math.max(2.6, String(text).length * 0.06 + 1.6) : 2.6); const p = mapPose('wave', 131, 612); spawn('spark', p[0], p[1], 6); }
+      else if (!(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) play('hello');
+      if (text) api.say(text);
+    },
+    /** poses: idle | wave | cheer | point | think | surprise. hold = seconds before going back to idle (0 = stay) */
+    setPose(name, hold = 0) { return setPose(name, hold); },
+    get poses() { return ['idle', ...Object.keys(pz)]; },
+    cheer(text) { if (setPose('cheer', text ? Math.max(2.4, String(text).length * 0.06 + 1.6) : 2.4)) { const p = mapPose('cheer', 476, 300); spawn('spark', p[0], p[1], 14); spawn('note', p[0] + 200, p[1], 1); } if (text) api.say(text); },
+    /** point to the side while saying the way */
+    guide(text) { if (setPose('point', text ? Math.max(3, String(text).length * 0.06 + 1.8) : 3)) { const p = mapPose('point', 923, 594); spawn('spark', p[0], p[1], 4); } if (text) api.say(text); },
+    think(text) { if (setPose('think', text ? Math.max(2.6, String(text).length * 0.06 + 1.6) : 2.6)) { const p = mapPose('think', 600, 20); spawn('q', p[0], p[1], 1); } if (text) api.say(text); },
+    surprised(text) { if (setPose('surprise', text ? Math.max(1.9, String(text).length * 0.06 + 1.6) : 1.9)) { const p = mapPose('surprise', 850, -40); spawn('ex', p[0], p[1], 1); } if (text) api.say(text); },
     /** 'sit' (자기 1, 앉아서) | 'lie' (자기 2, 엎드려 · 밤 배경) */
     sleep(kind = 'sit') { if (ready && !(seq && seq.type !== 'tablet' && seq.type !== 'wiggle')) goSleep(kind); },
     wake() { if (ready && !seq) goWake(); },
@@ -831,7 +963,7 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
     lookAt(x, y) { if (x == null) { pointerT = -10; return; } look.tx = clamp(x, -1, 1); look.ty = clamp(y, -0.6, 0.7); pointerT = now + 1e6; },
     setIdle(on) { opts.idle = !!on; },
     setReducedMotion(on) { opts.reducedMotion = !!on; },
-    get state() { return { mode, pose, expression: baseExpr, busy: !!seq, talking: userTalk, saying: !!say }; },
+    get state() { return { mode, pose: mode === 'awake' ? poseCur : pose, sleepPose: mode === 'sleep' ? pose : null, expression: baseExpr, busy: !!seq, talking: userTalk, saying: !!say }; },
     get _debug() { return { blink, expr, prevExpr, exprT, aSit, aLie, night, now, seq: seq && seq.type, P: Object.assign({}, P), horn: horn.a, leaf: leaf.a, look: { x: look.x, y: look.y } }; },
     /** run the animation forward by `sec` seconds at 60 fps (tests, posters; works in a hidden tab) */
     advance(sec) { if (!ready) return; let t = (last || performance.now()); for (let i = 0; i < Math.round(sec * 60); i++) { t += 1000 / 60; step(t); } },
