@@ -36,7 +36,7 @@ const A = {
 };
 const FR = { x: 228, y: 356, w: 500, h: 384 };   // face layer rectangle
 const VIEW = { x: 40, y: -120, w: 960, h: 1130 }; // what the stage shows (room above for jumps and Zzz)
-const LIE = { k: 0.97, x: 82, y: 323 };            // sleeping art placed in the same space
+const LIE = { k: 1.5, x: -152, y: -47 };   // eye spacing matches the sitting art; tummy on the same ground line            // sleeping art placed in the same space
 const LIE_A = { headset: { x: 670, y: 433 }, zzz: { x: 297, y: 219 }, ground: { x: 452, y: 647 } };   // in sleep.webp px
 const GRID = 48;
 
@@ -101,7 +101,8 @@ export function createNarang2D(host, o = {}) {
   let mode = opts.mood === 'sleep' ? 'sleep' : 'awake';
   let pose = opts.mood === 'sleep' ? (opts.sleepPose === 'lie' ? 'lie' : 'sit') : 'awake';
   let baseExpr = 'smile';
-  let expr = mode === 'sleep' ? 'sleep' : 'smile', prevExpr = expr, exprT = 1;   // crossfade 0..1
+  let expr = mode === 'sleep' ? 'sleep' : 'smile', prevExpr = expr, exprT = 1;   // crossfade 0..1 (mouth)
+  let eyeExpr = expr, eyePending = null;   // eyes switch while closed in a blink
   const num = Object.assign({ lid: 0, sl: 0, gz: 0 }, EXPRESSIONS[expr]);         // smoothed numbers
   const ov = {};                                                                    // per-frame overrides set by sequences
   let seq = null;            // running sequence {type, t0, dur, ...}
@@ -117,7 +118,7 @@ export function createNarang2D(host, o = {}) {
   // poses: separate pictures (wave, cheer, point, think, surprise) that the character pops between
   let PZ = null; const pz = {};                       // poses.json and per-pose mesh / texture
   let poseCur = 'idle', posePrev = 'idle', poseT0 = -10, poseHoldEnd = 0;
-  let LSQ = 0, LJY = 0, puffDone = true, sadAmt = 0;                               // squash / hop of the layer being drawn (pose pop)
+  let LSQ = 0, LJY = 0, puffDone = true, sadAmt = 0, LJYdraw = 0, dtLast = 0.016;                               // squash / hop of the layer being drawn (pose pop)
   let aSit = pose === 'lie' ? 0 : 1, aLie = pose === 'lie' ? 1 : 0, night = pose === 'lie' ? 1 : 0;
   let heartGlow = 1, headsetGlow = 1, now = 0;
   const parts = [];
@@ -418,7 +419,7 @@ export function createNarang2D(host, o = {}) {
       fctx.beginPath(); fctx.moveTo(-ix * rx * 0.55, -ry * 0.32); fctx.quadraticCurveTo(ix * rx * 0.05, -ry * 0.08, ix * rx * 0.45, 0);
       fctx.quadraticCurveTo(ix * rx * 0.05, ry * 0.08, -ix * rx * 0.55, ry * 0.3); fctx.stroke();
     } else if (type === 'happy') {
-      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop, pop);
+      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop, pop * (0.55 + 0.45 * blink));
       fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 13; fctx.lineCap = 'round';
       fctx.beginPath(); fctx.moveTo(-rx * 0.9, ry * 0.2); fctx.quadraticCurveTo(0, -ry * 0.7, rx * 0.9, ry * 0.2); fctx.stroke();
     } else if (type === 'sleep') {   // the crescent of the sleeping art: bowed down, tapered, outer end a little raised
@@ -429,7 +430,7 @@ export function createNarang2D(host, o = {}) {
       fctx.beginPath(); fctx.moveTo(lx, ly); fctx.quadraticCurveTo(0, ry * 0.42, rx2, ry2); fctx.quadraticCurveTo(0, ry * 0.66, lx, ly); fctx.closePath(); fctx.fill(); fctx.stroke();
     } else if (type === 'heart') {
       const beat = 1 + 0.08 * Math.max(0, Math.sin(now * 9));
-      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop * beat, pop * beat * Math.max(blink, 0.1));
+      fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop * beat * (0.7 + 0.3 * blink), pop * beat * Math.max(blink, 0.1));
       const s = rx * 1.05;
       const hp = new Path2D(); hp.moveTo(0, s * 0.85);
       hp.bezierCurveTo(-s * 1.25, s * 0.05, -s * 0.9, -s * 1.05, 0, -s * 0.45);
@@ -497,7 +498,7 @@ export function createNarang2D(host, o = {}) {
   }
   function drawFace() {
     const E0 = EXPRESSIONS[prevExpr], E1 = EXPRESSIONS[expr], k = easeInOut(exprT);
-    const sig = [prevExpr, expr, k.toFixed(2), blink.toFixed(2), look.x.toFixed(2), look.y.toFixed(2), num.bl.toFixed(1), num.bt.toFixed(2), num.es.toFixed(3),
+    const sig = [prevExpr, expr, eyeExpr, k.toFixed(2), blink.toFixed(2), look.x.toFixed(2), look.y.toFixed(2), num.bl.toFixed(1), num.bt.toFixed(2), num.es.toFixed(3),
       num.mx.toFixed(2), num.my.toFixed(2), num.blush.toFixed(2), num.lid.toFixed(3), num.sl.toFixed(2), num.gz.toFixed(2), talking ? (now * 30 | 0) : 0, (E1.eL === 'heart' || E0.eL === 'heart') ? (now * 30 | 0) : 0].join('|');
     if (sig === faceSig) return false;
     faceSig = sig;
@@ -505,8 +506,7 @@ export function createNarang2D(host, o = {}) {
     drawBrows();
     for (const side of [-1, 1]) {
       const key = side < 0 ? 'eL' : 'eR';
-      if (E0[key] === E1[key] || k >= 1) drawEye(E1[key], side, 1, 1);
-      else { const a0 = E0[key] === 'art' ? 1 - smooth(0, 0.5, k) : 1 - k, a1 = E1[key] === 'art' ? smooth(0.5, 1, k) : k; drawEye(E0[key], side, a0, 1 - 0.25 * k); drawEye(E1[key], side, a1, 0.75 + 0.25 * k); }
+      drawEye(EXPRESSIONS[eyeExpr][key], side, 1, 1);
     }
     if (E0.m === E1.m || k >= 1) drawMouth(E1.m, 1, 1);
     else { drawMouth(E0.m, 1 - k, 1 - 0.2 * k); drawMouth(E1.m, k, 0.8 + 0.2 * k); }
@@ -611,9 +611,14 @@ export function createNarang2D(host, o = {}) {
       }
       fx.globalAlpha = aLie;
       L.sleep.eyes.forEach((e, i) => {   // the original open eyes, scaled to this face and tilted with it
-        const n = i ? 'eye_r' : 'eye_l', sp = L[n], c = toCss(mapLie(e.x, e.y)), open = Math.max(0.04, lieEyes);
-        fx.save(); fx.translate(c[0], c[1] + sp.ry * e.s * kk * (1 - open) * 0.4); fx.rotate(e.rot); fx.scale(e.s * kk, e.s * kk * open);
+        const n = i ? 'eye_r' : 'eye_l', sp = L[n], c = toCss(mapLie(e.x, e.y)), open = clamp(lieEyes, 0, 1);
+        if (open < 0.05) return;
+        fx.save(); fx.translate(c[0], c[1]); fx.rotate(e.rot); fx.scale(e.s * kk, e.s * kk);
+        const R = sp.ry * 1.04, ly = -R + 2 * R * (1 - open);
+        fx.save(); fx.beginPath(); fx.rect(-sp.rx * 2, ly, sp.rx * 4, R * 3); fx.clip();
         fx.drawImage(img[n], sp.x - sp.cx, sp.y - sp.cy); fx.restore();
+        if (open < 0.97) { const hw = sp.rx * Math.sqrt(Math.max(0, 1 - (ly / R) ** 2)) * 1.04; fx.strokeStyle = '#3A1E0C'; fx.lineWidth = 6.5; fx.lineCap = 'round'; fx.beginPath(); fx.moveTo(-hw, ly); fx.quadraticCurveTo(0, ly - R * 0.08, hw, ly); fx.stroke(); }
+        fx.restore();
       });
       fx.restore();
     }
@@ -644,7 +649,10 @@ export function createNarang2D(host, o = {}) {
   // ---------------------------------------------------------------- behaviour
   function setExpr(name) {
     if (!EXPRESSIONS[name] || name === expr) return;
-    prevExpr = exprT < 0.5 ? prevExpr : expr; expr = name; exprT = 0; kick();
+    prevExpr = exprT < 0.5 ? prevExpr : expr; expr = name; exprT = 0;
+    if (EXPRESSIONS[name].eL !== EXPRESSIONS[eyeExpr].eL || EXPRESSIONS[name].eR !== EXPRESSIONS[eyeExpr].eR) { eyePending = name; blinkT = 0; blinkN = 1; }
+    else eyeExpr = name;
+    kick();
   }
   function emit() { if (opts.onChange) opts.onChange(api.state); }
   function hornKick(v) { horn.v += v; }
@@ -696,15 +704,15 @@ export function createNarang2D(host, o = {}) {
         else { P.droop = lerp(1.25, 0.3, smooth(0.62, 0.8, u)); ov.lid = lerp(0.97, 0.55, smooth(0.62, 1, u)); if (!s.j) { s.j = 1; hornKick(-2.2); } }
       }
       // 3.55-4.6 drifting off for good
-      if (t >= 3.55) { P.droop = lerp(0.3, 1, smooth(3.55, 4.5, t)); ov.lid = lerp(0.55, 1, smooth(3.6, 4.3, t)); if (t > 4.3 && !s.z) { s.z = 1; ov.lid = null; prevExpr = expr = 'sleep'; exprT = 1; } }
-    }, start() { setExpr('yawn'); }, end() { clearOv(); P.sq = 0; P.droop = 1; prevExpr = expr = 'sleep'; exprT = 1; } },
+      if (t >= 3.55) { P.droop = lerp(0.3, 1, smooth(3.55, 4.5, t)); ov.lid = lerp(0.55, 1, smooth(3.6, 4.3, t)); if (t > 4.3 && !s.z) { s.z = 1; ov.lid = null; prevExpr = expr = eyeExpr = 'sleep'; eyePending = null; exprT = 1; } }
+    }, start() { setExpr('yawn'); }, end() { clearOv(); P.sq = 0; P.droop = 1; prevExpr = expr = eyeExpr = 'sleep'; eyePending = null; exprT = 1; } },
 
     // falling asleep, lying: yawn, heavy lids, then flops down onto the tummy (see flop)
     drowse: { dur: 2.75, run(t, s) {
       yawnPart(t, s);
       if (t >= 1.45) { ov.lid = lerp(0.45, 0.68, smooth(1.45, 2.2, t)); P.droop = smooth(1.6, 2.3, t) * 0.5; }
       night = smooth(0.4, 2.75, t) * 0.45;    // the sun starts to set
-      if (t > 2.3) { const u = (t - 2.3) / 0.45; P.sq = 0.12 * easeInOut(u); P.jy = 20 * easeInOut(u); }   // slumping down
+      if (t > 2.15) { const u = clamp((t - 2.15) / 0.6, 0, 1); P.droop = 0.5 + 0.7 * easeInOut(u); P.sq = 0.035 * easeInOut(u); P.jy = 10 * easeInOut(u); P.head = 0.06 * easeInOut(u); }   // leans over, about to topple
     }, start() { setExpr('yawn'); }, end() { clearOv(); P.sq = 0; P.jy = 0; } },
 
     flop: { dur: 2.7, run(t, s) {   // lands on the tummy, eyes still half open, they slowly close, the night comes
@@ -713,11 +721,11 @@ export function createNarang2D(host, o = {}) {
       if (!s.closed) lieEyes = u < 0.8 ? 0.42 : u < 1.05 ? lerp(0.42, 0.06, (u - 0.8) / 0.25) : u < 1.3 ? lerp(0.06, 0.3, (u - 1.05) / 0.25) : lerp(0.3, 0, smooth(1.3, 2.0, u));
       lieSway = u > 1.9 ? 0.015 * Math.sin((u - 1.9) * TAU * 0.8) * (1 - smooth(1.9, 2.7, u)) : 0;   // snuggles in
       night = Math.max(night, lerp(0.45, 1, smooth(0.2, 2.4, u)));
-    }, start(s) { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; s.closed = flopClosed; flopClosed = false; }, end() { aSit = 0; aLie = 1; night = 1; lieDY = 0; lieRise = 0; lieEyes = 0; lieSway = 0; lieS = 1; } },
+    }, start(s) { prevExpr = expr = eyeExpr = 'sleep'; eyePending = null; exprT = 1; P.droop = 1; s.closed = flopClosed; flopClosed = false; }, end() { aSit = 0; aLie = 1; night = 1; lieDY = 0; lieRise = 0; lieEyes = 0; lieSway = 0; lieS = 1; } },
 
     wake: { dur: 1.8, run(t, s) {
       P.droop = 1 - smooth(0, 0.5, t);
-      if (t > 0.35 && !s.a) { s.a = 1; prevExpr = expr = 'smile'; exprT = 1; blink = 0.05; }
+      if (t > 0.35 && !s.a) { s.a = 1; prevExpr = expr = eyeExpr = 'smile'; eyePending = null; exprT = 1; blink = 0.05; }
       if (t > 0.35 && t < 0.95) blink = [0.35, 0.05, 0.6, 0.1, 1][Math.min(4, Math.floor((t - 0.35) / 0.12))];
       if (t > 0.95 && !s.b) { s.b = 1; blink = 1; setExpr('surprise'); hornKick(-2.5); const p = mapPoint(480, 330); spawn('spark', p[0], p[1], 7); }
       if (t > 0.95) { const u = (t - 0.95) / 0.85; P.sq = -0.05 * Math.sin(PI * clamp(u * 1.6, 0, 1)); }
@@ -736,7 +744,7 @@ export function createNarang2D(host, o = {}) {
       lieSway = 0.035 * Math.sin(t * TAU * 2.2) * (1 - smooth(0.2, 0.55, t));
       // 0.5-0.9 eyes flutter open
       lieEyes = t < 0.5 ? 0 : t < 0.6 ? 0.4 * (t - 0.5) / 0.1 : t < 0.68 ? 0.4 - 0.35 * (t - 0.6) / 0.08 : Math.min(1, 0.05 + (t - 0.68) / 0.14);
-      if (t > 0.74 && !s.ex) { s.ex = 1; const p = lieToArt(560, 120); spawn('ex', p[0], p[1], 1); hornKick(-1.5); }
+      if (t > 0.74 && !s.ex) { s.ex = 1; const p = lieToArt(200, 60); spawn('ex', p[0], p[1], 1); hornKick(-1.5); }
       night = 1 - smooth(0.55, 1.5, t);
       // 0.95-1.2 stretch up off the floor
       lieRise = easeInOut(clamp((t - 0.95) / 0.25, 0, 1)); lieDY = -16 * lieRise;
@@ -746,7 +754,7 @@ export function createNarang2D(host, o = {}) {
         const u = t - 1.2; P.sq = 0.1 * Math.cos(u * 12) * Math.exp(-u * 6); P.jy = -32 * Math.sin(PI * clamp(u / 0.32, 0, 1));
       }
     }, start() {
-      prevExpr = expr = 'smile'; exprT = 1; blink = 1; P.droop = 0; aLie = 1; aSit = 0; lieEyes = 0; lieRise = 0;
+      prevExpr = expr = eyeExpr = 'smile'; eyePending = null; exprT = 1; blink = 1; P.droop = 0; aLie = 1; aSit = 0; lieEyes = 0; lieRise = 0;
       for (let i = parts.length - 1; i >= 0; i--) if (parts[i].type === 'z') parts.splice(i, 1);
     }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; lieEyes = 0; lieRise = 0; lieSway = 0; P.sq = 0; P.jy = 0; } },
 
@@ -754,7 +762,7 @@ export function createNarang2D(host, o = {}) {
       const out = smooth(0, 0.35, t); aLie = 1 - out; lieS = 1 - 0.1 * out; lieDY = 22 * out;
       aSit = smooth(0.25, 0.5, t); const u = Math.max(0, t - 0.25); P.sq = t < 0.25 ? 0.1 : 0.1 * Math.cos(u * 10) * Math.exp(-u * 5);
       night = 1 - smooth(0.2, 1.2, t);
-    }, start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
+    }, start() { prevExpr = expr = eyeExpr = 'sleep'; eyePending = null; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
 
     nod: { dur: 1.15, run(t) {   // yes, yes
       P.nod = Math.max(0, Math.sin(t * TAU / 0.52)) * (1 - smooth(0.7, 1.15, t)); P.sq = 0.012 * P.nod;
@@ -835,13 +843,13 @@ export function createNarang2D(host, o = {}) {
   // ---------------------------------------------------------------- frame
   function step(t) {
     if (last && t <= last) return;   // the clock went backwards (advance() ran ahead of the page): nothing to do
-    const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016); last = t; now += dt;
+    const dt = Math.min(0.05, last ? (t - last) / 1000 : 0.016); last = t; now += dt; dtLast = dt;
     const rm = opts.reducedMotion;
     runSeq(); idle(dt);
     if (poseCur !== 'idle' && poseHoldEnd && now > poseHoldEnd) { poseHoldEnd = 0; switchPose('idle'); emit(); }
     if (posePrev !== poseCur && poseAge() >= 0.1 && !puffDone) {   // the swap: a little puff hides the cut
-      puffDone = true; const c = poseCur !== 'idle' && pz[poseCur] ? mapPose(poseCur, pz[poseCur].d.neck[0], pz[poseCur].d.neck[1] - 150) : mapPoint(480, 600);
-      if (!opts.reducedMotion) for (let i = 0; i < 5; i++) spawn('spark', c[0] + rand(-300, 300), c[1] + rand(-280, 120), 1);
+      puffDone = true;
+      if (!opts.reducedMotion) for (let i = 0; i < 6; i++) { const a = -PI * (0.08 + 0.84 * i / 5) + rand(-0.12, 0.12), r = rand(430, 500); spawn('spark', 476 + Math.cos(a) * r, 560 + Math.sin(a) * r * 0.95, 1); }
     }
     if (posePrev !== poseCur && poseAge() > 0.2) posePrev = poseCur;
     // expression crossfade and smoothed numbers
@@ -854,8 +862,10 @@ export function createNarang2D(host, o = {}) {
       if (blinkT < 0) {
         blink = 1; nextBlink -= dt;
         if (nextBlink <= 0 && mode === 'awake') { blinkT = 0; blinkN = Math.random() < 0.22 ? 2 : 1; }
+        if (eyePending) { blinkT = 0; blinkN = 1; }
       } else {
         blinkT += dt; const d = 0.17, cyc = 0.25, i = Math.floor(blinkT / cyc), u = blinkT - i * cyc;
+        if (eyePending && blinkT >= d * 0.5) { eyeExpr = eyePending; eyePending = null; faceSig = ''; }
         blink = i < blinkN && u < d ? 1 - Math.sin(PI * u / d) * 0.96 : 1;
         if (blinkT >= blinkN * cyc) { blinkT = -1; nextBlink = rand(2.2, 5.5); }
       }
@@ -932,11 +942,14 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
   }
   function updateSay() {
     if (!say) { sayTalk = false; return; }
-    const el = now - say.t0, n = Math.min(say.text.length, Math.floor(el / 0.055));
+    const el = now - say.t0, n = Math.min(say.text.length, 1 + Math.floor(el / 0.055));
     if (n !== say.shown) { say.shown = n; say.vis.textContent = say.text.slice(0, n); }
     sayTalk = n < say.text.length && el < say.typeEnd;
     // place it over the head, inside the stage
-    const a = aLie > 0.5 ? toCss(lieToArt(300, 160)) : poseCur !== 'idle' && pz[poseCur] ? toCss(mapPose(poseCur, pz[poseCur].d.neck[0] - 60, pz[poseCur].d.y + 90)) : toCss(mapPoint(470, 120));
+    // one fixed spot above the head (left of the horn) for every pose; it follows the body's bob, eased
+    const tgt = aLie > 0.5 ? toCss(lieToArt(330, 40)) : toCss([400, 95 + P.jy + LJYdraw]);
+    if (!say.at) say.at = tgt.slice(); else { const kq = 1 - Math.exp(-dtLast * 10); say.at[0] += (tgt[0] - say.at[0]) * kq; say.at[1] += (tgt[1] - say.at[1]) * kq; }
+    const a = say.at;
     const bw = bubble.offsetWidth || 120, left = clamp(a[0], bw / 2 + 6, W - bw / 2 - 6), top = Math.max(a[1], (bubble.offsetHeight || 40) + 14);
     bubble.style.left = left + 'px'; bubble.style.top = top + 'px';
     bubble.style.setProperty('--tail', clamp(a[0] - left + bw / 2, 22, bw - 22) + 'px');
