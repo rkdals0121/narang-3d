@@ -42,14 +42,15 @@ const GRID = 48;
 
 export const EXPRESSIONS = {
   //          eyes L / R            brows lift, tilt   eye scale  mouth type, sx, sy   blush
+  // lid: how far the upper eyelid comes down (0-1), sl: lid droops toward the outer corner, gz: eyes look down
   smile:    { eL: 'art',   eR: 'art',   bl: 0,   bt: 0,    es: 1,    m: 'art',   mx: 1,    my: 1,    blush: 0 },
   laugh:    { eL: 'happy', eR: 'happy', bl: -9,  bt: 0,    es: 1,    m: 'art',   mx: 1.12, my: 1.38, blush: 0.55 },
   wink:     { eL: 'happy', eR: 'art',   bl: -5,  bt: 0,    es: 1,    m: 'art',   mx: 1,    my: 0.9,  blush: 0.3 },
   surprise: { eL: 'art',   eR: 'art',   bl: -17, bt: 0,    es: 1.1,  m: 'o',     mx: 1,    my: 1,    blush: 0 },
-  sad:      { eL: 'sad',   eR: 'sad',   bl: -3,  bt: 0.28, es: 1,    m: 'frown', mx: 1,    my: 1,    blush: 0 },
+  sad:      { eL: 'art',   eR: 'art',   bl: -4,  bt: -0.42, es: 0.97, m: 'pout', mx: 1,    my: 1,    blush: 0, lid: 0.3, sl: 0.42, gz: 1 },
   love:     { eL: 'heart', eR: 'heart', bl: -7,  bt: 0,    es: 1,    m: 'art',   mx: 1.05, my: 1.18, blush: 0.85 },
-  sleepy:   { eL: 'half',  eR: 'half',  bl: 2,   bt: 0,    es: 1,    m: 'art',   mx: 0.85, my: 0.6,  blush: 0.1 },
-  yawn:     { eL: 'happy', eR: 'happy', bl: -10, bt: 0,    es: 1,    m: 'o',     mx: 1.5,  my: 1.7,  blush: 0.15 },
+  sleepy:   { eL: 'art',   eR: 'art',   bl: 4,   bt: 0,    es: 1,    m: 'small', mx: 1,    my: 1,    blush: 0.1, lid: 0.55, sl: 0.06, gz: 0.4 },
+  yawn:     { eL: 'squeeze', eR: 'squeeze', bl: -12, bt: 0.06, es: 1,  m: 'yawn',  mx: 1,    my: 1,    blush: 0.15 },
   sleep:    { eL: 'sleep', eR: 'sleep', bl: 3,   bt: 0,    es: 1,    m: 'sleep', mx: 1,    my: 1,    blush: 0.2 }
 };
 
@@ -101,7 +102,8 @@ export function createNarang2D(host, o = {}) {
   let pose = opts.mood === 'sleep' ? (opts.sleepPose === 'lie' ? 'lie' : 'sit') : 'awake';
   let baseExpr = 'smile';
   let expr = mode === 'sleep' ? 'sleep' : 'smile', prevExpr = expr, exprT = 1;   // crossfade 0..1
-  const num = Object.assign({}, EXPRESSIONS[expr]);                              // smoothed numbers
+  const num = Object.assign({ lid: 0, sl: 0, gz: 0 }, EXPRESSIONS[expr]);         // smoothed numbers
+  const ov = {};                                                                    // per-frame overrides set by sequences
   let seq = null;            // running sequence {type, t0, dur, ...}
   let talking = false, userTalk = false, sayTalk = false, say = null, bubble = null;
   let blink = 1, nextBlink = 1.5, blinkT = -1, blinkN = 1;
@@ -115,7 +117,7 @@ export function createNarang2D(host, o = {}) {
   // poses: separate pictures (wave, cheer, point, think, surprise) that the character pops between
   let PZ = null; const pz = {};                       // poses.json and per-pose mesh / texture
   let poseCur = 'idle', posePrev = 'idle', poseT0 = -10, poseHoldEnd = 0;
-  let LSQ = 0, LJY = 0, puffDone = true;                               // squash / hop of the layer being drawn (pose pop)
+  let LSQ = 0, LJY = 0, puffDone = true, sadAmt = 0;                               // squash / hop of the layer being drawn (pose pop)
   let aSit = pose === 'lie' ? 0 : 1, aLie = pose === 'lie' ? 1 : 0, night = pose === 'lie' ? 1 : 0;
   let heartGlow = 1, headsetGlow = 1, now = 0;
   const parts = [];
@@ -380,26 +382,41 @@ export function createNarang2D(host, o = {}) {
       fctx.globalAlpha = alpha * k; fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 8; fctx.lineCap = 'round';
       fctx.beginPath(); fctx.moveTo(x - FR.x - rx * 0.85, y - FR.y + ry * 0.05); fctx.quadraticCurveTo(x - FR.x, y - FR.y + ry * 0.38, x - FR.x + rx * 0.85, y - FR.y + ry * 0.05); fctx.stroke();
     };
-    if (type === 'art' || type === 'sad' || type === 'half') {
-      const open = type === 'half' ? 0.42 * blink : blink;
-      const vis = smooth(0.06, 0.3, open);   // the squashed eye fades into a closed lid line
-      fctx.globalAlpha = alpha * vis;
-      drawSpriteAt(name, x, y + ry * (1 - open) * 0.35, sc, sc * Math.max(open, 0.04));
-      if (type === 'sad' || type === 'half') {
-        // the upper part of the eye is cut away, so the real skin of the base shows (an eyelid), drooping outwards when sad
-        const t = type === 'sad' ? 0.3 : 0, ox = side < 0 ? -1 : 1;
-        const ly = y - FR.y - ry * (type === 'sad' ? 0.42 : 0.1) * Math.max(open, 0.2);
-        const xl = x - FR.x - rx * 1.7, xr = x - FR.x + rx * 1.7, yl = ly - ox * t * rx * 0.85, yr = ly + ox * t * rx * 0.85;
-        fctx.save(); fctx.beginPath(); fctx.ellipse(x - FR.x, y - FR.y, rx * sc + 34, ry * sc + 34, 0, 0, TAU); fctx.clip();
-        fctx.globalCompositeOperation = 'destination-out'; fctx.globalAlpha = 1;
-        fctx.beginPath(); fctx.moveTo(xl, yl - 300); fctx.lineTo(xr, yr - 300); fctx.lineTo(xr, yr); fctx.lineTo(xl, yl); fctx.closePath();
-        fctx.filter = 'blur(1.5px)'; fctx.fill(); fctx.filter = 'none';
+    if (type === 'art') {
+      // the upper eyelid: the eye is cut away above the lid edge so the skin of the base shows; blinking moves the same lid
+      const cover = clamp(1 - (1 - num.lid) * blink, 0, 1), ox = side < 0 ? -1 : 1;
+      const yy = y + num.gz * ry * 0.1, R = ry * sc * 1.04, Rx = rx * sc;
+      if (cover < 0.985) { fctx.globalAlpha = alpha; drawSpriteAt(name, x, yy, sc, sc); }
+      if (cover > 0.01) {
+        const cx = x - FR.x, cy = yy - FR.y, ly = cy - R + 2 * R * cover;
+        const drop = num.sl * Rx * 0.9 * Math.sin(PI * clamp(cover * 1.6, 0, 1));    // outer corner lower
+        const yOut = ly + drop, yIn = ly - drop * 0.4, xo = cx + ox * Rx * 1.6, xi = cx - ox * Rx * 1.6;
+        const bow = R * 0.1 * (1 - cover);                                            // lid edge a little rounded
+        fctx.save(); fctx.beginPath(); fctx.ellipse(cx, cy, Rx + 34, R + 34, 0, 0, TAU); fctx.clip();
+        fctx.globalCompositeOperation = 'destination-out'; fctx.globalAlpha = 1; fctx.fillStyle = '#000';   // (a gradient left over from the blush would erase nothing)
+        fctx.beginPath(); fctx.moveTo(xi, yIn - 400); fctx.lineTo(xo, yOut - 400); fctx.lineTo(xo, yOut);
+        fctx.quadraticCurveTo(cx, (yOut + yIn) / 2 - bow * 2, xi, yIn); fctx.closePath();
+        fctx.filter = 'blur(1px)'; fctx.fill(); fctx.filter = 'none';
         fctx.restore();
-        fctx.save(); fctx.globalAlpha = alpha * vis; fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 7; fctx.lineCap = 'round';
-        const k = 0.5; fctx.beginPath(); fctx.moveTo(lerp(x - FR.x, xl, k), lerp(ly, yl, k)); fctx.lineTo(lerp(x - FR.x, xr, k), lerp(ly, yr, k)); fctx.stroke();
+        fctx.save(); fctx.globalAlpha = alpha; fctx.strokeStyle = '#3A1E0C'; fctx.lineCap = 'round';
+        if (cover > 0.93) {   // closed: a soft downward lash curve
+          fctx.lineWidth = 7; fctx.beginPath(); fctx.moveTo(cx - Rx * 0.86, cy + R * 0.02); fctx.quadraticCurveTo(cx, cy + R * 0.34, cx + Rx * 0.86, cy + R * 0.02); fctx.stroke();
+        } else {              // the lid edge across the eye, as wide as the eye at that height
+          const hw = Rx * Math.sqrt(Math.max(0, 1 - ((ly - cy) / R) ** 2)) * 1.04;
+          if (hw > 2) {
+            const yAt = (xx) => yIn + (yOut - yIn) * (xx - xi) / (xo - xi);   // along the (slanted) lid line
+            fctx.lineWidth = 6.5; fctx.beginPath(); fctx.moveTo(cx - hw, yAt(cx - hw));
+            fctx.quadraticCurveTo(cx, yAt(cx) - bow * 2, cx + hw, yAt(cx + hw)); fctx.stroke();
+          }
+        }
         fctx.restore();
       }
-      if (open < 0.3) lidLine(1 - vis);
+    } else if (type === 'squeeze') {   // yawning: eyes squeezed shut, > <
+      fctx.translate(x - FR.x, y - FR.y + ry * 0.05); fctx.scale(pop, pop);
+      const ix = side < 0 ? 1 : -1;   // the point of the chevron faces the nose
+      fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 10; fctx.lineCap = 'round'; fctx.lineJoin = 'round';
+      fctx.beginPath(); fctx.moveTo(-ix * rx * 0.55, -ry * 0.32); fctx.quadraticCurveTo(ix * rx * 0.05, -ry * 0.08, ix * rx * 0.45, 0);
+      fctx.quadraticCurveTo(ix * rx * 0.05, ry * 0.08, -ix * rx * 0.55, ry * 0.3); fctx.stroke();
     } else if (type === 'happy') {
       fctx.translate(x - FR.x, y - FR.y); fctx.scale(pop, pop);
       fctx.strokeStyle = '#3A1E0C'; fctx.lineWidth = 13; fctx.lineCap = 'round';
@@ -438,10 +455,23 @@ export function createNarang2D(host, o = {}) {
       const g = fctx.createLinearGradient(0, -rh, 0, rh); g.addColorStop(0, '#6E0204'); g.addColorStop(1, '#C23A40');
       fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(0, 0, rw, rh, 0, 0, TAU); fctx.fill(); fctx.shadowColor = 'transparent';
       fctx.fillStyle = '#FC7A7E'; fctx.beginPath(); fctx.ellipse(0, rh * 0.5, rw * 0.62, rh * 0.38, 0, 0, TAU); fctx.fill();
-    } else if (type === 'frown') {
-      fctx.translate(cx, top + 34); fctx.scale(pop, pop);
-      fctx.strokeStyle = '#A8262F'; fctx.lineWidth = 7; fctx.lineCap = 'round';
-      fctx.beginPath(); fctx.moveTo(-30, 10); fctx.quadraticCurveTo(0, -14, 30, 10); fctx.stroke();
+    } else if (type === 'frown' || type === 'pout') {   // sulky: a short mouth turned down at the corners, lower lip pushed out a little
+      fctx.translate(cx, top + 30); fctx.scale(pop, pop);
+      fctx.strokeStyle = '#9C2A33'; fctx.lineWidth = 5.5; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(-19, 7); fctx.bezierCurveTo(-9, -3, 9, -3, 19, 7); fctx.stroke();
+      fctx.strokeStyle = 'rgba(200,120,110,0.35)'; fctx.lineWidth = 4;
+      fctx.beginPath(); fctx.moveTo(-9, 12); fctx.quadraticCurveTo(0, 16, 9, 12); fctx.stroke();
+    } else if (type === 'small') {   // drowsy: the mouth almost closed, a small soft line
+      fctx.translate(cx, top + 26); fctx.scale(pop, pop);
+      fctx.strokeStyle = '#A8323A'; fctx.lineWidth = 5; fctx.lineCap = 'round';
+      fctx.beginPath(); fctx.moveTo(-16, 0); fctx.quadraticCurveTo(0, 7, 16, 0); fctx.stroke();
+    } else if (type === 'yawn') {     // a tall yawn: size follows num.my (0.3 almost shut .. 2 wide open)
+      const o = clamp(num.my, 0.2, 2.2), rw = (14 + 8 * o) * pop, rh = (8 + 20 * o) * pop;
+      fctx.translate(cx, top + 22 + rh * 0.55);
+      fctx.shadowColor = 'rgba(176,128,96,0.45)'; fctx.shadowBlur = 6;
+      const g = fctx.createLinearGradient(0, -rh, 0, rh); g.addColorStop(0, '#5E0306'); g.addColorStop(1, '#B0343B');
+      fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(0, 0, rw, rh, 0, 0, TAU); fctx.fill(); fctx.shadowColor = 'transparent';
+      fctx.fillStyle = '#F2737A'; fctx.beginPath(); fctx.ellipse(0, rh * 0.55, rw * 0.66, rh * 0.36, 0, 0, TAU); fctx.fill();
     } else if (type === 'sleep') {
       fctx.translate(cx, top + 24); fctx.scale(pop, pop);
       fctx.strokeStyle = '#B0222E'; fctx.lineWidth = 6; fctx.lineCap = 'round';
@@ -452,21 +482,23 @@ export function createNarang2D(host, o = {}) {
   function drawBrows() {
     for (const side of [-1, 1]) {
       const n = side < 0 ? 'brow_l' : 'brow_r', s = L[n];
-      drawSpriteAt(n, s.cx + look.x * 9, s.cy + num.bl + look.y * 6, 1, 1, num.bt * side * -1);
+      drawSpriteAt(n, s.cx + look.x * 9, s.cy + num.bl + look.y * 6, 1, 1, num.bt * side * -1);   // bt < 0: inner ends up (sad), > 0: inner ends down
     }
   }
   function drawBlush() {
     if (num.blush < 0.02) return;
+    fctx.save();
     for (const [x, y] of [[272, 650], [698, 632]]) {
       const g = fctx.createRadialGradient(x - FR.x, y - FR.y, 0, x - FR.x, y - FR.y, 52);
       g.addColorStop(0, `rgba(255,120,130,${0.42 * num.blush})`); g.addColorStop(1, 'rgba(255,120,130,0)');
       fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(x - FR.x, y - FR.y, 60, 48, 0, 0, TAU); fctx.fill();
     }
+    fctx.restore();
   }
   function drawFace() {
     const E0 = EXPRESSIONS[prevExpr], E1 = EXPRESSIONS[expr], k = easeInOut(exprT);
     const sig = [prevExpr, expr, k.toFixed(2), blink.toFixed(2), look.x.toFixed(2), look.y.toFixed(2), num.bl.toFixed(1), num.bt.toFixed(2), num.es.toFixed(3),
-      num.mx.toFixed(2), num.my.toFixed(2), num.blush.toFixed(2), talking ? (now * 30 | 0) : 0, (E1.eL === 'heart' || E0.eL === 'heart') ? (now * 30 | 0) : 0].join('|');
+      num.mx.toFixed(2), num.my.toFixed(2), num.blush.toFixed(2), num.lid.toFixed(3), num.sl.toFixed(2), num.gz.toFixed(2), talking ? (now * 30 | 0) : 0, (E1.eL === 'heart' || E0.eL === 'heart') ? (now * 30 | 0) : 0].join('|');
     if (sig === faceSig) return false;
     faceSig = sig;
     fctx.clearRect(0, 0, FR.w, FR.h);
@@ -474,7 +506,7 @@ export function createNarang2D(host, o = {}) {
     for (const side of [-1, 1]) {
       const key = side < 0 ? 'eL' : 'eR';
       if (E0[key] === E1[key] || k >= 1) drawEye(E1[key], side, 1, 1);
-      else { drawEye(E0[key], side, 1 - k, 1 - 0.25 * k); drawEye(E1[key], side, k, 0.75 + 0.25 * k); }
+      else { const a0 = E0[key] === 'art' ? 1 - smooth(0, 0.5, k) : 1 - k, a1 = E1[key] === 'art' ? smooth(0.5, 1, k) : k; drawEye(E0[key], side, a0, 1 - 0.25 * k); drawEye(E1[key], side, a1, 0.75 + 0.25 * k); }
     }
     if (E0.m === E1.m || k >= 1) drawMouth(E1.m, 1, 1);
     else { drawMouth(E0.m, 1 - k, 1 - 0.2 * k); drawMouth(E1.m, k, 0.8 + 0.2 * k); }
@@ -650,12 +682,38 @@ export function createNarang2D(host, o = {}) {
       if (t > 1.1) { const p = mapPoint(780, 280); if (!this.n) { this.n = 1; spawn('note', p[0], p[1], 1); } }
     }, start() { this.n = 0; setExpr('laugh'); }, end() { P.head = 0; P.sway = 0; setExpr(baseExpr); } },
 
-    doze: { dur: 2.6, run(t, s) {   // yawn, eyes close, head droops
-      if (t < 0.9) { if (!s.y) { s.y = 1; setExpr('yawn'); } P.sq = -0.03 * Math.sin(PI * t / 0.9); }
-      else if (t < 1.6) { if (!s.h) { s.h = 1; setExpr('sleepy'); } }
-      else if (!s.z) { s.z = 1; setExpr('sleep'); }
-      P.droop = smooth(0.9, 2.4, t);
-    }, end() { P.sq = 0; P.droop = 1; } },
+    doze: { dur: 4.6, run(t, s) {
+      yawnPart(t, s);
+      // 1.5-2.7 heavy lids with one slow blink, head starting to sink
+      if (t >= 1.45) {
+        ov.lid = t < 2.0 ? lerp(0.45, 0.62, smooth(1.45, 2.0, t)) : t < 2.35 ? 0.62 + 0.36 * Math.sin(PI * (t - 2.0) / 0.35) : t < 3.0 ? lerp(0.62, 0.9, smooth(2.35, 3.0, t)) : ov.lid;
+        P.droop = smooth(1.6, 3.0, t) * 0.75;
+      }
+      // 3.0 nodding off: the head drops ... and jerks back up, eyes half open again
+      if (t >= 3.0 && t < 3.55) {
+        const u = (t - 3.0) / 0.55;
+        if (u < 0.62) { P.droop = 0.75 + 0.5 * smooth(0, 0.62, u); ov.lid = 0.97; }
+        else { P.droop = lerp(1.25, 0.3, smooth(0.62, 0.8, u)); ov.lid = lerp(0.97, 0.55, smooth(0.62, 1, u)); if (!s.j) { s.j = 1; hornKick(-2.2); } }
+      }
+      // 3.55-4.6 drifting off for good
+      if (t >= 3.55) { P.droop = lerp(0.3, 1, smooth(3.55, 4.5, t)); ov.lid = lerp(0.55, 1, smooth(3.6, 4.3, t)); if (t > 4.3 && !s.z) { s.z = 1; ov.lid = null; prevExpr = expr = 'sleep'; exprT = 1; } }
+    }, start() { setExpr('yawn'); }, end() { clearOv(); P.sq = 0; P.droop = 1; prevExpr = expr = 'sleep'; exprT = 1; } },
+
+    // falling asleep, lying: yawn, heavy lids, then flops down onto the tummy (see flop)
+    drowse: { dur: 2.75, run(t, s) {
+      yawnPart(t, s);
+      if (t >= 1.45) { ov.lid = lerp(0.45, 0.68, smooth(1.45, 2.2, t)); P.droop = smooth(1.6, 2.3, t) * 0.5; }
+      night = smooth(0.4, 2.75, t) * 0.45;    // the sun starts to set
+      if (t > 2.3) { const u = (t - 2.3) / 0.45; P.sq = 0.12 * easeInOut(u); P.jy = 20 * easeInOut(u); }   // slumping down
+    }, start() { setExpr('yawn'); }, end() { clearOv(); P.sq = 0; P.jy = 0; } },
+
+    flop: { dur: 2.7, run(t, s) {   // lands on the tummy, eyes still half open, they slowly close, the night comes
+      if (!s.in) { s.in = 1; aSit = 0; aLie = 1; lieEyes = s.closed ? 0 : 0.42; const p = lieToArt(450, 640); spawn('spark', p[0], p[1], 6); hornKick(2.5); }
+      const u = t; lieDY = -26 * (1 - smooth(0, 0.14, u)); lieRise = u < 0.14 ? 0.25 : -0.22 * Math.cos((u - 0.14) * 13) * Math.exp(-(u - 0.14) * 6);
+      if (!s.closed) lieEyes = u < 0.8 ? 0.42 : u < 1.05 ? lerp(0.42, 0.06, (u - 0.8) / 0.25) : u < 1.3 ? lerp(0.06, 0.3, (u - 1.05) / 0.25) : lerp(0.3, 0, smooth(1.3, 2.0, u));
+      lieSway = u > 1.9 ? 0.015 * Math.sin((u - 1.9) * TAU * 0.8) * (1 - smooth(1.9, 2.7, u)) : 0;   // snuggles in
+      night = Math.max(night, lerp(0.45, 1, smooth(0.2, 2.4, u)));
+    }, start(s) { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; s.closed = flopClosed; flopClosed = false; }, end() { aSit = 0; aLie = 1; night = 1; lieDY = 0; lieRise = 0; lieEyes = 0; lieSway = 0; lieS = 1; } },
 
     wake: { dur: 1.8, run(t, s) {
       P.droop = 1 - smooth(0, 0.5, t);
@@ -664,7 +722,7 @@ export function createNarang2D(host, o = {}) {
       if (t > 0.95 && !s.b) { s.b = 1; blink = 1; setExpr('surprise'); hornKick(-2.5); const p = mapPoint(480, 330); spawn('spark', p[0], p[1], 7); }
       if (t > 0.95) { const u = (t - 0.95) / 0.85; P.sq = -0.05 * Math.sin(PI * clamp(u * 1.6, 0, 1)); }
       if (t > 1.45 && !s.c) { s.c = 1; setExpr('smile'); }
-    }, end() { P.sq = 0; P.droop = 0; blink = 1; setExpr(baseExpr); } },
+    }, start() { clearOv(); }, end() { P.sq = 0; P.droop = 0; blink = 1; setExpr(baseExpr); } },
 
     toLie: { dur: 1.7, run(t, s) {   // night falls, the sitting one sinks down, the lying one pops up
       night = smooth(0, 1.1, t);
@@ -717,10 +775,21 @@ export function createNarang2D(host, o = {}) {
     }, end() { P.jy = 0; P.sq = 0; P.head = 0; P.sway = 0; setExpr(baseExpr); } }
   };
   const queue = [];
+  let flopClosed = false;
+  function clearOv() { for (const k in ov) delete ov[k]; }
+  // 0-1.45: a big yawn: head back, body stretches up, eyes screwed shut, the mouth opens wide and closes
+  function yawnPart(t, s) {
+    if (t < 1.45) {
+      const o = Math.sin(PI * clamp(t / 1.35, 0, 1)), op = Math.pow(o, 0.7);
+      ov.my = 0.25 + 1.75 * op; ov.ly = -0.4 * op; ov.lx = 0;
+      P.sq = -0.045 * op; P.droop = 0;
+      if (t > 1.2 && !s.e) { s.e = 1; ov.my = null; setExpr('sleepy'); }
+    } else { ov.my = null; ov.ly = null; ov.lx = null; P.sq = 0; if (!s.e) { s.e = 1; setExpr('sleepy'); } }
+  }
   function play(type, then) {
     if (seq && SEQ[seq.type].end) SEQ[seq.type].end.call(SEQ[seq.type], seq);
     seq = { type, t0: now, then };
-    if (SEQ[type].start) SEQ[type].start.call(SEQ[type], seq);
+    if (SEQ[type].start) SEQ[type].start.call(SEQ[type], seq);   // start(s): s is the running sequence
     emit(); kick();
   }
   function runSeq() {
@@ -737,10 +806,10 @@ export function createNarang2D(host, o = {}) {
     kind = kind === 'lie' ? 'lie' : 'sit';
     if (poseCur !== 'idle') { switchPose('idle', true); poseHoldEnd = 0; }
     if (mode === 'sleep' && pose === kind) return;
-    if (mode === 'sleep' && pose === 'sit' && kind === 'lie') { pose = 'lie'; play('toLie', emit); return; }
+    if (mode === 'sleep' && pose === 'sit' && kind === 'lie') { pose = 'lie'; flopClosed = true; play('flop', emit); return; }
     if (mode === 'sleep' && pose === 'lie' && kind === 'sit') { pose = 'sit'; play('lieToSit', emit); return; }
     mode = 'sleep'; pose = kind; baseExpr = 'smile';
-    play('doze', () => { if (kind === 'lie') play('toLie', emit); else emit(); });
+    if (kind === 'lie') play('drowse', () => play('flop', emit)); else play('doze', emit);
   }
   function goWake() {
     if (mode !== 'sleep') return;
@@ -778,7 +847,8 @@ export function createNarang2D(host, o = {}) {
     // expression crossfade and smoothed numbers
     exprT = Math.min(1, exprT + dt / 0.16);
     const E = EXPRESSIONS[expr], kk = 1 - Math.exp(-dt * 14);
-    for (const n of ['bl', 'bt', 'es', 'mx', 'my', 'blush']) num[n] += (E[n] - num[n]) * kk;
+    for (const n of ['bl', 'bt', 'es', 'mx', 'my', 'blush', 'lid', 'sl', 'gz']) num[n] += ((E[n] || 0) - num[n]) * kk;
+    for (const n in ov) if (ov[n] != null && n in num) num[n] = ov[n];
     // blinking (single or double); the wake sequence drives the eyes itself
     if (!(seq && seq.type === 'wake')) {
       if (blinkT < 0) {
@@ -792,18 +862,20 @@ export function createNarang2D(host, o = {}) {
     }
     // look: spring toward target
     const kL = 1 - Math.exp(-dt * (seq && seq.type === 'tablet' ? 6 : 4.5));
-    const ltx = mode === 'sleep' ? 0 : look.tx, lty = mode === 'sleep' ? 0.35 : look.ty;
+    sadAmt += ((expr === 'sad' && mode === 'awake' && poseCur === 'idle' ? 1 : 0) - sadAmt) * (1 - Math.exp(-dt * 3));
+    let ltx = mode === 'sleep' ? 0 : look.tx * (1 - sadAmt * 0.6), lty = mode === 'sleep' ? 0.35 : look.ty * (1 - sadAmt) + sadAmt * 0.45;
+    if (ov.lx != null) ltx = ov.lx; if (ov.ly != null) lty = ov.ly;
     const ox = look.x; look.x += (ltx * (rm ? 0.4 : 1) - look.x) * kL; look.y += (lty * (rm ? 0.4 : 1) - look.y) * kL;
     // breathing
-    const asleep = mode === 'sleep' || (seq && seq.type === 'doze');
-    const per = asleep ? 4.6 : 3.2;
+    const asleep = mode === 'sleep';
+    const per = asleep ? 4.6 : 3.2 + sadAmt * 1.2;   // a sulky one breathes slower
     P.breath = Math.sin(now * TAU / per) * (asleep ? 1.6 : 1) * (rm ? 0.5 : 1);
     // head: droop when asleep + a slow nod, tilt toward the look direction
     const nod = asleep ? Math.sin(now * TAU / per + 0.8) * 0.012 : 0;
     const baseHead = P.droop * 0.07 + look.x * 0.045 + nod;
     if (!(seq && (seq.type === 'wiggle' || seq.type === 'love' || seq.type === 'shake' || seq.type === 'hello'))) P.head += (baseHead - P.head) * (1 - Math.exp(-dt * 8));
     else P.head = clamp(P.head + baseHead * 0.3, -0.16, 0.16);   // the sequence set P.head this frame; add the look tilt once
-    P.hy = P.droop * 16 + (asleep ? P.breath * 2 : 0);
+    P.hy = P.droop * 16 + (asleep ? P.breath * 2 : 0) + sadAmt * 7 + Math.max(0, P.breath) * sadAmt * 2;
     P.hx = P.droop * 6;
     // springs: horn and leaf, driven by head motion
     const headX = P.head * 300 + (look.x + P.shk) * 24 + P.nod * 6 + P.jy * 0.02, hv = (headX - lastHeadX) / Math.max(dt, 1e-3), ha = (hv - lastHeadV) / Math.max(dt, 1e-3);
@@ -816,7 +888,8 @@ export function createNarang2D(host, o = {}) {
     headsetGlow = asleep ? 0.55 + 0.35 * Math.sin(now * 1.4) : 0.85 + 0.15 * Math.sin(now * 2.2);
     if (!(seq && (seq.type === 'love' || seq.type === 'tablet'))) heartGlow = 1 + (asleep ? -0.3 : 0.12 * Math.max(0, Math.sin(now * 4.4)) * Math.max(0, Math.sin(now * 2.2)));
     // Zzz
-    if (asleep && !rm && Math.floor(now / 1.5) !== Math.floor((now - dt) / 1.5)) {
+    const dozing = seq && ((seq.type === 'doze' && now - seq.t0 < 4.2) || seq.type === 'drowse' || (seq.type === 'flop' && now - seq.t0 < 2.2));
+    if (asleep && !dozing && !rm && Math.floor(now / 1.5) !== Math.floor((now - dt) / 1.5)) {
       const p = aLie > 0.5 ? mapLie(LIE_A.zzz.x, LIE_A.zzz.y) : mapPoint(A.zzz.x, A.zzz.y); spawn('z', p[0], p[1], 1);
     }
     // mesh
@@ -1000,6 +1073,7 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
     setIdle(on) { opts.idle = !!on; },
     setReducedMotion(on) { opts.reducedMotion = !!on; },
     get state() { return { mode, pose: mode === 'awake' ? poseCur : pose, sleepPose: mode === 'sleep' ? pose : null, expression: baseExpr, busy: !!seq, talking: userTalk, saying: !!say }; },
+    get _face() { return face; },
     get _debug() { return { blink, expr, prevExpr, exprT, aSit, aLie, night, now, seq: seq && seq.type, P: Object.assign({}, P), horn: horn.a, leaf: leaf.a, look: { x: look.x, y: look.y } }; },
     /** run the animation forward by `sec` seconds at 60 fps (tests, posters; works in a hidden tab) */
     advance(sec) { if (!ready) return; let t = (last || performance.now()); for (let i = 0; i < Math.round(sec * 60); i++) { t += 1000 / 60; step(t); } },
