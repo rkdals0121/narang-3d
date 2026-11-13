@@ -12,6 +12,7 @@ RAW, OUT = sys.argv[1], sys.argv[2]
 os.makedirs(os.path.join(OUT, 'poses'), exist_ok=True)
 S = 0.91                     # generated art is ~10 % larger than the original (eye height 67 vs 61 px)
 ART_CX, ART_FEET = 476, 958  # eyes midpoint x and feet y of the original front view
+BODY_H = 210                 # original: hood bottom (y 748) to feet
 
 # everything below in raw px of the generated images (measured on a grid)
 P = {
@@ -69,8 +70,30 @@ for name, p in P.items():
     im = Image.fromarray(rgba[y0:y1, x0:x1], 'RGBA')
     w, h = round(im.width * S), round(im.height * S)
     im = im.resize((w, h), Image.LANCZOS)
-    im.save(os.path.join(OUT, 'poses', name + '.webp'), quality=90, method=6)
     ox, oy = to_art(x0, y0, p)
+    # The generated bodies are 10-45 % taller than the original's (head matched by eye size). Squeeze everything
+    # below the neck vertically to the original body height (neck y 748 -> feet y 958), blending over 60 px so the
+    # neck has no kink, then move the pose down so the feet stay on the ground line.
+    neck_l = to_art(*p['neck'], p)[1] - oy
+    kb = min(1.0, BODY_H / (ART_FEET - (neck_l + oy)))
+    rows = np.arange(h + 1, dtype=np.float64)
+    k = 1 + (kb - 1) * np.clip((rows - (neck_l - 30)) / 60, 0, 1) ** 2 * (3 - 2 * np.clip((rows - (neck_l - 30)) / 60, 0, 1))
+    yout = np.concatenate([[0], np.cumsum(k[:-1])])          # output position of each source row
+    def ymap(y_local): return float(np.interp(y_local, rows, yout))
+    h2 = int(round(yout[-1]))
+    src_rows = np.interp(np.arange(h2, dtype=np.float64), yout, rows).astype(np.float32)
+    mapy = np.repeat(src_rows[:, None], w, 1); mapx = np.repeat(np.arange(w, dtype=np.float32)[None, :], h2, 0)
+    arr = np.asarray(im).astype(np.float32)
+    pm = arr.copy(); pm[..., :3] *= pm[..., 3:4] / 255                 # premultiplied, so edges do not bleed
+    res = cv2.remap(pm, mapx, mapy, cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    a_ = np.clip(res[..., 3], 0, 255); res[..., :3] = np.where(a_[..., None] > 0.5, res[..., :3] * 255 / np.maximum(a_[..., None], 1e-3), 0)
+    im = Image.fromarray(np.clip(res, 0, 255).astype(np.uint8), 'RGBA'); h = h2
+    oy = round(ART_FEET - ymap(ART_FEET - oy), 1)
+    oy0 = to_art(x0, y0, p)[1]
+    def A(x, y):                                               # raw px -> art px after the squeeze
+        ax, ay = to_art(x, y, p); return [ax, round(oy + ymap(ay - oy0), 1)]
+    im.save(os.path.join(OUT, 'poses', name + '.webp'), quality=90, method=6)
+    print('  body', round(ART_FEET - (neck_l + oy0)), '->', BODY_H, 'k', round(kb, 2))
     # skin colour just above each eye (for the eyelid while blinking)
     src = np.asarray(Image.open(os.path.join(RAW, name + '.png')).convert('RGB')).astype(int)
     eyes = []
@@ -80,11 +103,11 @@ for name, p in P.items():
         e = np.hypot((xx - ex) / rx, (yy - ey) / ry); ring = src[ey - 2 * ry: ey + 2 * ry, ex - 2 * rx: ex + 2 * rx][(e > 1.3) & (e < 1.6)]
         ring = ring[(ring[:, 0] - ring[:, 1] < 25)]                       # not the pink cheeks
         lum = ring.mean(1); sk = ring[lum >= np.percentile(lum, 50)].mean(0)
-        c = to_art(ex, ey, p); eyes.append(dict(x=c[0], y=c[1], rx=round(rx * S, 1), ry=round(ry * S, 1), skin=[int(v) for v in sk]))
+        c = A(ex, ey); eyes.append(dict(x=c[0], y=c[1], rx=round(rx * S, 1), ry=round(ry * S, 1), skin=[int(v) for v in sk]))
     limbs = []
     for L in p['limbs']:
-        d = dict(kind=L['kind'], c=to_art(*L['c'], p), r=[round(L['r'][0] * S, 1), round(L['r'][1] * S, 1)],
-                 pivot=to_art(*L['pivot'], p), amp=L['amp'] * (S if L['kind'] == 'poke' else 1), hz=L['hz'], phase=L.get('phase', 0))
+        d = dict(kind=L['kind'], c=A(*L['c']), r=[round(L['r'][0] * S, 1), round(L['r'][1] * S, 1)],
+                 pivot=A(*L['pivot']), amp=L['amp'] * (S if L['kind'] == 'poke' else 1), hz=L['hz'], phase=L.get('phase', 0))
         if 'dir' in L: d['dir'] = L['dir']
         limbs.append(d)
     # eyelids: the skin under each eye, filled in from its surroundings (keeps the face shading), feathered at the rim
@@ -110,7 +133,7 @@ for name, p in P.items():
         Image.fromarray(lid, 'RGBA').save(os.path.join(OUT, 'poses', name + '_lids.webp'), quality=92, method=6)
         lids = 'poses/%s_lids.webp' % name
     out[name] = dict(img='poses/%s.webp' % name, lids=lids, x=ox, y=oy, w=w, h=h, eyes=eyes, limbs=limbs,
-                     neck=to_art(*p['neck'], p), headset=to_art(*p['headset'], p),
-                     heart=to_art(*p['heart'], p) if 'heart' in p else None, tilt=p.get('tilt', 0))
+                     neck=A(*p['neck']), headset=A(*p['headset']),
+                     heart=A(*p['heart']) if 'heart' in p else None, tilt=p.get('tilt', 0))
     print(name, im.size, 'at', ox, oy, os.path.getsize(os.path.join(OUT, 'poses', name + '.webp')) // 1024, 'KB')
 json.dump(out, open(os.path.join(OUT, 'poses.json'), 'w'), indent=1)

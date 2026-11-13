@@ -111,6 +111,7 @@ export function createNarang2D(host, o = {}) {
   let lastHeadX = 0, lastHeadV = 0;
   const P = { breath: 0, sq: 0, jy: 0, sway: 0, head: 0, hx: 0, hy: 0, tap: 0, tapL: 0, tapR: 0, arms: 0, droop: 0, nod: 0, shk: 0 };
   let lieS = 1, lieDY = 0;   // the lying art pops in / sinks out
+  let lieEyes = 0, lieRise = 0, lieSway = 0;   // waking up while lying: eyes open, the body stretches up, a wriggle
   // poses: separate pictures (wave, cheer, point, think, surprise) that the character pops between
   let PZ = null; const pz = {};                       // poses.json and per-pose mesh / texture
   let poseCur = 'idle', posePrev = 'idle', poseT0 = -10, poseHoldEnd = 0;
@@ -254,11 +255,14 @@ export function createNarang2D(host, o = {}) {
   }
   function lieToArt(x, y) { const g = A.ground; return [g.x + (LIE.x + x * LIE.k - g.x) * lieS, g.y + (LIE.y + y * LIE.k - g.y) * lieS + lieDY]; }
   function lieView() { const g = A.ground; return [LIE.k * lieS, g.x + (LIE.x - g.x) * lieS, g.y + (LIE.y - g.y) * lieS + lieDY]; }
-  function mapLie(x, y) {
-    const b = P.breath, sy = 1 + b * 0.02, sx = 1 - b * 0.006;
-    let px = LIE_A.ground.x + (x - LIE_A.ground.x) * sx, py = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
-    return lieToArt(px, py);
+  function lieShape(x, y, wh, out) {
+    const b = P.breath, sy = (1 + b * 0.02) * (1 + lieRise * 0.17), sx = (1 - b * 0.006) * (1 - lieRise * 0.05);
+    const sway = Math.sin(now * TAU / 4.6 + 0.5) * 0.006 + lieSway;
+    if (wh > 0) { const dx = x - 450, dy = y - 560, c = Math.cos(sway * wh), s2 = Math.sin(sway * wh); x = 450 + dx * c - dy * s2; y = 560 + dx * s2 + dy * c; }
+    out[0] = LIE_A.ground.x + (x - LIE_A.ground.x) * sx; out[1] = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
+    return out;
   }
+  function mapLie(x, y) { const q = lieShape(x, y, 1 - smooth(470, 560, y), [0, 0]); return lieToArt(q[0], q[1]); }
 
   // ---------------------------------------------------------------- WebGL
   let prog, buf = {}, tex = {}, U = {};
@@ -510,10 +514,15 @@ export function createNarang2D(host, o = {}) {
   function drawBack() {
     bx.setTransform(dpr, 0, 0, dpr, 0, 0); bx.clearRect(0, 0, W, H);
     if (night > 0.01) {   // night sky for the lying sleep
-      bx.globalAlpha = night;
+      // night <-> day goes through a warm dawn instead of a grey half-transparent navy
+      const k = smooth(0.3, 1, night);   // dawn -> violet -> night sky (a straight mix of navy and peach turns muddy)
+      const mix3 = (a, b, c) => (k < 0.5 ? a.map((v, i) => Math.round(v + (b[i] - v) * k * 2)) : b.map((v, i) => Math.round(v + (c[i] - v) * (k - 0.5) * 2)));
+      const c0 = mix3([255, 214, 150], [222, 150, 178], [38, 48, 94]), c1 = mix3([255, 236, 200], [120, 92, 158], [11, 16, 40]);
+      bx.globalAlpha = smooth(0, 0.35, night);
       const g = bx.createRadialGradient(W / 2, H * 0.62, 0, W / 2, H * 0.62, Math.max(W, H) * 0.8);
-      g.addColorStop(0, '#26305e'); g.addColorStop(1, '#0b1028');
+      g.addColorStop(0, `rgb(${c0})`); g.addColorStop(1, `rgb(${c1})`);
       bx.fillStyle = g; bx.fillRect(0, 0, W, H);
+      bx.globalAlpha = smooth(0.5, 1, night);
       for (const s of stars) {
         const tw = 0.45 + 0.55 * Math.sin(now * s.s * 1.7 + s.p);
         bx.fillStyle = `rgba(255,246,210,${0.75 * tw})`; drawStar(bx, s.x * W, s.y * H, 2.2 * s.s, 0);
@@ -561,6 +570,21 @@ export function createNarang2D(host, o = {}) {
     }
     LSQ = 0; LJY = 0;
     if (aLie > 0.01) glow(fx, mapLie(LIE_A.headset.x, LIE_A.headset.y), 80, '150,240,60', headsetGlow * aLie * 0.8, 0.6, 1);
+    if (aLie > 0.01 && lieEyes > 0.005 && img.sleep_lids && L.sleep.eyes) {
+      const kk = S * LIE.k * lieS * (1 + lieRise * 0.06);
+      fx.save(); fx.globalAlpha = aLie * smooth(0, 0.2, lieEyes);
+      for (const e of L.sleep.lids) {   // skin over the closed-eye crescents
+        const c = toCss(mapLie(e.x, e.y));
+        fx.drawImage(img.sleep_lids, e.x - e.rx, e.y - e.ry, e.rx * 2, e.ry * 2, c[0] - e.rx * kk, c[1] - e.ry * kk, e.rx * 2 * kk, e.ry * 2 * kk);
+      }
+      fx.globalAlpha = aLie;
+      L.sleep.eyes.forEach((e, i) => {   // the original open eyes, scaled to this face and tilted with it
+        const n = i ? 'eye_r' : 'eye_l', sp = L[n], c = toCss(mapLie(e.x, e.y)), open = Math.max(0.04, lieEyes);
+        fx.save(); fx.translate(c[0], c[1] + sp.ry * e.s * kk * (1 - open) * 0.4); fx.rotate(e.rot); fx.scale(e.s * kk, e.s * kk * open);
+        fx.drawImage(img[n], sp.x - sp.cx, sp.y - sp.cy); fx.restore();
+      });
+      fx.restore();
+    }
     // particles
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i]; p.age += dt;
@@ -649,12 +673,30 @@ export function createNarang2D(host, o = {}) {
       const u = clamp((t - 0.6) / 0.65, 0, 1); aLie = smooth(0.6, 0.95, t); lieS = 0.88 + 0.12 * easeOutBack(u); lieDY = 28 * (1 - easeOut(u));
       if (t > 0.62 && !s.p) { s.p = 1; const p = lieToArt(450, 380); spawn('spark', p[0], p[1], 9); }
     }, end() { P.sq = 0; P.jy = 0; aSit = 0; aLie = 1; night = 1; lieS = 1; lieDY = 0; } },
-    fromLie: { dur: 1.4, run(t) {
-      const out = smooth(0, 0.4, t); aLie = 1 - out; lieS = 1 - 0.1 * out; lieDY = 22 * out;
-      aSit = smooth(0.28, 0.6, t);
-      const u = Math.max(0, t - 0.28); P.sq = t < 0.28 ? 0.1 : 0.1 * Math.cos(u * 10) * Math.exp(-u * 5);
-      night = 1 - smooth(0.2, 1.3, t);
-    }, start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; for (let i = parts.length - 1; i >= 0; i--) if (parts[i].type === 'z') parts.splice(i, 1); }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
+    fromLie: { dur: 1.75, run(t, s) {
+      // 0-0.5 wriggle
+      lieSway = 0.035 * Math.sin(t * TAU * 2.2) * (1 - smooth(0.2, 0.55, t));
+      // 0.5-0.9 eyes flutter open
+      lieEyes = t < 0.5 ? 0 : t < 0.6 ? 0.4 * (t - 0.5) / 0.1 : t < 0.68 ? 0.4 - 0.35 * (t - 0.6) / 0.08 : Math.min(1, 0.05 + (t - 0.68) / 0.14);
+      if (t > 0.74 && !s.ex) { s.ex = 1; const p = lieToArt(560, 120); spawn('ex', p[0], p[1], 1); hornKick(-1.5); }
+      night = 1 - smooth(0.55, 1.5, t);
+      // 0.95-1.2 stretch up off the floor
+      lieRise = easeInOut(clamp((t - 0.95) / 0.25, 0, 1)); lieDY = -16 * lieRise;
+      // 1.2 pop: sitting up
+      if (t >= 1.2) {
+        if (!s.pop) { s.pop = 1; aLie = 0; aSit = 1; for (let i = parts.length - 1; i >= 0; i--) if (parts[i].type === 'ex') parts.splice(i, 1); const p = mapPoint(480, 520); spawn('spark', p[0], p[1], 10); hornKick(-3); }
+        const u = t - 1.2; P.sq = 0.1 * Math.cos(u * 12) * Math.exp(-u * 6); P.jy = -32 * Math.sin(PI * clamp(u / 0.32, 0, 1));
+      }
+    }, start() {
+      prevExpr = expr = 'smile'; exprT = 1; blink = 1; P.droop = 0; aLie = 1; aSit = 0; lieEyes = 0; lieRise = 0;
+      for (let i = parts.length - 1; i >= 0; i--) if (parts[i].type === 'z') parts.splice(i, 1);
+    }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; lieEyes = 0; lieRise = 0; lieSway = 0; P.sq = 0; P.jy = 0; } },
+
+    lieToSit: { dur: 1.2, run(t) {   // still asleep: from lying back to sitting (eyes stay closed)
+      const out = smooth(0, 0.35, t); aLie = 1 - out; lieS = 1 - 0.1 * out; lieDY = 22 * out;
+      aSit = smooth(0.25, 0.5, t); const u = Math.max(0, t - 0.25); P.sq = t < 0.25 ? 0.1 : 0.1 * Math.cos(u * 10) * Math.exp(-u * 5);
+      night = 1 - smooth(0.2, 1.2, t);
+    }, start() { prevExpr = expr = 'sleep'; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
 
     nod: { dur: 1.15, run(t) {   // yes, yes
       P.nod = Math.max(0, Math.sin(t * TAU / 0.52)) * (1 - smooth(0.7, 1.15, t)); P.sq = 0.012 * P.nod;
@@ -696,14 +738,14 @@ export function createNarang2D(host, o = {}) {
     if (poseCur !== 'idle') { switchPose('idle', true); poseHoldEnd = 0; }
     if (mode === 'sleep' && pose === kind) return;
     if (mode === 'sleep' && pose === 'sit' && kind === 'lie') { pose = 'lie'; play('toLie', emit); return; }
-    if (mode === 'sleep' && pose === 'lie' && kind === 'sit') { pose = 'sit'; play('fromLie', emit); return; }
+    if (mode === 'sleep' && pose === 'lie' && kind === 'sit') { pose = 'sit'; play('lieToSit', emit); return; }
     mode = 'sleep'; pose = kind; baseExpr = 'smile';
     play('doze', () => { if (kind === 'lie') play('toLie', emit); else emit(); });
   }
   function goWake() {
     if (mode !== 'sleep') return;
     const wasLie = pose === 'lie'; mode = 'awake'; pose = 'awake';
-    if (wasLie) play('fromLie', () => play('wake')); else play('wake');
+    if (wasLie) play('fromLie', () => { if (pz.cheer) { setPose('cheer', 1.3); const p = mapPose('cheer', 476, 300); spawn('spark', p[0], p[1], 8); } else emit(); }); else play('wake');
   }
 
   // idle life
@@ -793,13 +835,7 @@ export function createNarang2D(host, o = {}) {
       }
     }
     if (aLie > 0.001) {
-      const b = P.breath, sy = 1 + b * 0.02, sx = 1 - b * 0.006, sway = Math.sin(now * TAU / 4.6 + 0.5) * 0.006;
-      for (let k = 0; k < NV; k++) {
-        let x = lrest[k * 2], y = lrest[k * 2 + 1];
-        const wh = wLHead[k];
-        if (wh > 0) { const dx = x - 450, dy = y - 560, c = Math.cos(sway * wh), s = Math.sin(sway * wh); x = 450 + dx * c - dy * s; y = 560 + dx * s + dy * c; }
-        lpos[k * 2] = LIE_A.ground.x + (x - LIE_A.ground.x) * sx; lpos[k * 2 + 1] = LIE_A.ground.y + (y - LIE_A.ground.y) * sy;
-      }
+      for (let k = 0; k < NV; k++) { lieShape(lrest[k * 2], lrest[k * 2 + 1], wLHead[k], tmp); lpos[k * 2] = tmp[0]; lpos[k * 2 + 1] = tmp[1]; }
     }
     updateSay();
     talking = userTalk || sayTalk;
@@ -892,11 +928,11 @@ pointer-events:none;word-break:keep-all;overflow-wrap:anywhere;text-align:center
   // ---------------------------------------------------------------- load
   const load = (n) => new Promise((res, rej) => { const im = new Image(); im.decoding = 'async'; im.onload = () => res(im); im.onerror = () => rej(new Error('narang2d: ' + n)); im.src = opts.assets + n + '.webp'; });
   Promise.all([fetch(opts.assets + 'layout.json').then((r) => r.json()), fetch(opts.assets + 'poses.json').then((r) => (r.ok ? r.json() : null)).catch(() => null)
-      .then((j) => (j ? Promise.all(Object.entries(j).map(([n, d]) => new Promise((res) => { const im = new Image(); im.onload = () => { if (!d.lids) return res([n, d, im, null]); const lm = new Image(); lm.onload = () => res([n, d, im, lm]); lm.onerror = () => res([n, d, im, null]); lm.src = opts.assets + d.lids; }; im.onerror = () => res(null); im.src = opts.assets + d.img; }))) : [])), ...['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].map(load)])
+      .then((j) => (j ? Promise.all(Object.entries(j).map(([n, d]) => new Promise((res) => { const im = new Image(); im.onload = () => { if (!d.lids) return res([n, d, im, null]); const lm = new Image(); lm.onload = () => res([n, d, im, lm]); lm.onerror = () => res([n, d, im, null]); lm.src = opts.assets + d.lids; }; im.onerror = () => res(null); im.src = opts.assets + d.img; }))) : [])), ...['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth', 'sleep_lids'].map((n) => load(n).catch(() => null))])
     .then(([lay, poseList, ...ims]) => {
       if (dead) return;
       L = lay; buildLie(lay.sleep.w, lay.sleep.h);
-      for (const e of poseList) if (e) { e[1].name = e[0]; buildPose(e[0], e[1], e[2]); pz[e[0]].lids = e[3]; } ['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth'].forEach((n, i) => { img[n] = ims[i]; });
+      for (const e of poseList) if (e) { e[1].name = e[0]; buildPose(e[0], e[1], e[2]); pz[e[0]].lids = e[3]; } ['base', 'sleep', 'eye_l', 'eye_r', 'brow_l', 'brow_r', 'mouth', 'sleep_lids'].forEach((n, i) => { img[n] = ims[i]; });
       if (gl) { try { initGL(); } catch (err) { console.warn('narang2d: WebGL failed, using 2D', err); gl = null; } }
       if (!gl && !c2) { cv.remove(); const n = mk(1); host.insertBefore(n, front); c2 = n.getContext('2d'); }
       if (mode === 'sleep') { P.droop = 1; }

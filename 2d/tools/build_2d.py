@@ -134,3 +134,30 @@ layout['sleep'] = dict(w=im.width, h=im.height, crop=[int(x0), int(y0), int(x1),
 json.dump(layout, open(os.path.join(OUT, 'layout.json'), 'w'), indent=1)
 print(json.dumps(layout))
 for fn in sorted(os.listdir(OUT)): print(fn, os.path.getsize(os.path.join(OUT, fn)))
+
+# ---------------------------------------------------------------- 4. the lying art, eyes open (for waking up)
+# skin under the two closed-eye crescents, filled in from the face around them, feathered: drawn over the lying
+# art while it wakes, with the original open eyes (eye_l / eye_r) scaled to this face on top.
+sl = np.asarray(Image.open(os.path.join(OUT, 'sleep.webp')).convert('RGBA')).astype(np.float32)
+LE = [dict(x=261, y=485, rx=40, ry=17), dict(x=450, y=461, rx=45, ry=20)]      # crescents, measured on sleep.webp
+Hh, Ww = sl.shape[:2]; yy2, xx2 = np.mgrid[0:Hh, 0:Ww].astype(np.float32)
+hole = np.zeros((Hh, Ww), bool); feather = np.zeros((Hh, Ww), np.float32)
+for e in LE:
+    d = np.hypot((xx2 - e['x']) / (e['rx'] + 8), (yy2 - e['y']) / (e['ry'] + 10)); hole |= d < 1
+    d2 = np.hypot((xx2 - e['x']) / (e['rx'] + 14), (yy2 - e['y']) / (e['ry'] + 30))
+    feather = np.maximum(feather, np.clip((1.15 - d2) / 0.3, 0, 1))
+rgb = sl[..., :3].copy()
+fill = cv2.inpaint(rgb.astype(np.uint8), hole.astype(np.uint8), 5, cv2.INPAINT_TELEA).astype(np.float32)
+ys, xs = np.where(hole); y0, y1, x0, x1 = ys.min() - 2, ys.max() + 3, xs.min() - 2, xs.max() + 3
+sub = fill[y0:y1, x0:x1].copy(); hm = hole[y0:y1, x0:x1]
+for it in range(2000):
+    avg = (np.roll(sub, 1, 0) + np.roll(sub, -1, 0) + np.roll(sub, 1, 1) + np.roll(sub, -1, 1)) / 4
+    sub[hm] = avg[hm]
+fill[y0:y1, x0:x1] = sub
+Image.fromarray(np.dstack([fill, feather * 255]).astype(np.uint8), 'RGBA').save(os.path.join(OUT, 'sleep_lids.webp'), quality=92, method=6)
+# open eyes for this face: the front eyes scaled by eye spacing (front 293 px, lying 189 px), tilted with the face
+k = 189 / 293.0; tilt = float(np.arctan2(461 - 485, 450 - 261))
+layout['sleep']['eyes'] = [dict(x=e['x'], y=e['y'] - 8, s=round(k, 3), rot=round(tilt, 3)) for e in LE]
+layout['sleep']['lids'] = [dict(x=e['x'], y=e['y'], rx=e['rx'] + 14, ry=e['ry'] + 30) for e in LE]
+json.dump(layout, open(os.path.join(OUT, 'layout.json'), 'w'), indent=1)
+print('sleep eyes', layout['sleep']['eyes'])
