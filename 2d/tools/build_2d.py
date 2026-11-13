@@ -123,6 +123,7 @@ ex = np.minimum(np.arange(ww), ww - 1 - np.arange(ww))[None, :].astype(np.float3
 edge = np.clip(np.minimum(ey, ex) / 160.0, 0, 1); edge = edge * edge * (3 - 2 * edge)
 glow_only = 1 - body
 sa = sa * (1 - glow_only * (1 - edge))
+sa = np.maximum(body, sa * 0.45)   # the baked glow is soft; the engine adds its own night glow
 sc = s / np.maximum(sa[..., None], 1e-3)
 ys, xs = np.where(sa > 0.03)
 x0, x1, y0, y1 = max(xs.min() - 4, 0), min(xs.max() + 5, s.shape[1]), max(ys.min() - 4, 0), min(ys.max() + 5, s.shape[0])

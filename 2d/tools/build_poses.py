@@ -13,17 +13,18 @@ os.makedirs(os.path.join(OUT, 'poses'), exist_ok=True)
 S = 0.91                     # generated art is ~10 % larger than the original (eye height 67 vs 61 px)
 ART_CX, ART_FEET = 476, 958  # eyes midpoint x and feet y of the original front view
 BODY_H = 210                 # original: hood bottom (y 748) to feet
+BODY_W = 0.84                # the generated bodies are also wider than the original's onesie
 
 # everything below in raw px of the generated images (measured on a grid)
 P = {
   'wave': dict(cx=611, feet=1167,
     eyes=[(445, 619, 54, 67), (778, 614, 55, 67)], neck=(590, 870),
-    limbs=[dict(c=(232, 787), r=(125, 120), pivot=(405, 905), kind='rot', amp=0.27, hz=2.3)],
+    limbs=[dict(c=(228, 792), r=(108, 100), pivot=(330, 905), kind='rot', amp=0.2, hz=2.2)],
     headset=(1095, 646), heart=(604, 934)),
   'cheer': dict(cx=590, feet=1200,
     eyes=[], neck=(600, 875),
-    limbs=[dict(c=(148, 737), r=(130, 125), pivot=(370, 905), kind='rot', amp=0.11, hz=1.7, phase=0),
-           dict(c=(1110, 752), r=(130, 125), pivot=(850, 905), kind='rot', amp=-0.11, hz=1.7, phase=0)],
+    limbs=[dict(c=(148, 737), r=(112, 108), pivot=(330, 900), kind='rot', amp=0.1, hz=1.7, phase=0),
+           dict(c=(1110, 752), r=(112, 108), pivot=(880, 900), kind='rot', amp=-0.1, hz=1.7, phase=0)],
     headset=(1053, 618)),
   'point': dict(cx=577, feet=1215,
     eyes=[(415, 636, 52, 66), (739, 603, 53, 67)], neck=(610, 880),
@@ -82,7 +83,11 @@ for name, p in P.items():
     def ymap(y_local): return float(np.interp(y_local, rows, yout))
     h2 = int(round(yout[-1]))
     src_rows = np.interp(np.arange(h2, dtype=np.float64), yout, rows).astype(np.float32)
-    mapy = np.repeat(src_rows[:, None], w, 1); mapx = np.repeat(np.arange(w, dtype=np.float32)[None, :], h2, 0)
+    neck_x = to_art(*p['neck'], p)[0] - ox
+    bl = np.clip((src_rows - (neck_l - 30)) / 60, 0, 1); bl = bl * bl * (3 - 2 * bl)
+    kx = (1 + (BODY_W - 1) * bl).astype(np.float32)
+    mapy = np.repeat(src_rows[:, None], w, 1)
+    mapx = (neck_x + (np.arange(w, dtype=np.float32)[None, :] - neck_x) / kx[:, None]).astype(np.float32)
     arr = np.asarray(im).astype(np.float32)
     pm = arr.copy(); pm[..., :3] *= pm[..., 3:4] / 255                 # premultiplied, so edges do not bleed
     res = cv2.remap(pm, mapx, mapy, cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
@@ -90,8 +95,11 @@ for name, p in P.items():
     im = Image.fromarray(np.clip(res, 0, 255).astype(np.uint8), 'RGBA'); h = h2
     oy = round(ART_FEET - ymap(ART_FEET - oy), 1)
     oy0 = to_art(x0, y0, p)[1]
+    nx_art = to_art(*p['neck'], p)[0]
     def A(x, y):                                               # raw px -> art px after the squeeze
-        ax, ay = to_art(x, y, p); return [ax, round(oy + ymap(ay - oy0), 1)]
+        ax, ay = to_art(x, y, p); yl = ay - oy0
+        b = np.clip((yl - (neck_l - 30)) / 60, 0, 1); b = b * b * (3 - 2 * b); k_ = 1 + (BODY_W - 1) * b
+        return [round(nx_art + (ax - nx_art) * k_, 1), round(oy + ymap(yl), 1)]
     im.save(os.path.join(OUT, 'poses', name + '.webp'), quality=90, method=6)
     print('  body', round(ART_FEET - (neck_l + oy0)), '->', BODY_H, 'k', round(kb, 2))
     # skin colour just above each eye (for the eyelid while blinking)

@@ -36,7 +36,7 @@ const A = {
 };
 const FR = { x: 228, y: 356, w: 500, h: 384 };   // face layer rectangle
 const VIEW = { x: 40, y: -120, w: 960, h: 1130 }; // what the stage shows (room above for jumps and Zzz)
-const LIE = { k: 1.5, x: -152, y: -47 };   // eye spacing matches the sitting art; tummy on the same ground line            // sleeping art placed in the same space
+const LIE = { k: 1.22, x: -27, y: 142 };   // eye spacing matches the sitting art; tummy on the same ground line            // sleeping art placed in the same space
 const LIE_A = { headset: { x: 670, y: 433 }, zzz: { x: 297, y: 219 }, ground: { x: 452, y: 647 } };   // in sleep.webp px
 const GRID = 48;
 
@@ -182,8 +182,8 @@ export function createNarang2D(host, o = {}) {
       let qx = A.neck.x + dx * c - dy * s + P.hx, qy = A.neck.y + dx * s + dy * c + P.hy;
       // 2.5D turn: the face slides over the dome, the horn and the ear cup (further back) move the other way
       const lx = look.x + P.shk;
-      qx += lx * 24 * wd - lx * 8 * whn - lx * 7 * whs + P.shk * 10;
-      qy += look.y * 14 * wd + P.nod * (6 + 12 * wd);   // nod: the face dips more than the hood rim
+      qx += lx * 24 * wd - lx * 8 * whn - lx * 7 * whs + P.shk * 14;
+      qy += look.y * 22 * wd + P.nod * (16 + 26 * wd);   // nod: the whole head dips, the face more than the hood rim
       px += (qx - px) * wh; py += (qy - py) * wh;
     }
     // whole body: breathing, squash and stretch, jump, sway
@@ -209,7 +209,7 @@ export function createNarang2D(host, o = {}) {
     }
     pz[name] = { d, im, rest, pos: new Float32Array(N * 2), wh, wl, tex: null };
   }
-  function limbW(l, x, y) { const e = Math.hypot((x - l.c[0]) / l.r[0], (y - l.c[1]) / l.r[1]); return 1 - smooth(0.8, 1.3, e); }
+  function limbW(l, x, y) { const e = Math.hypot((x - l.c[0]) / l.r[0], (y - l.c[1]) / l.r[1]); return 1 - smooth(0.72, 1.0, e); }
   function poseAge() { return now - poseT0; }
   function poseNames() { return posePrev === poseCur ? [poseCur] : [posePrev, poseCur]; }
   // pop between poses: the old one squashes and vanishes, the new one appears squashed, springs up and settles
@@ -404,7 +404,7 @@ export function createNarang2D(host, o = {}) {
           fctx.lineWidth = 7; fctx.beginPath(); fctx.moveTo(cx - Rx * 0.86, cy + R * 0.02); fctx.quadraticCurveTo(cx, cy + R * 0.34, cx + Rx * 0.86, cy + R * 0.02); fctx.stroke();
         } else {              // the lid edge across the eye, as wide as the eye at that height
           const hw = Rx * Math.sqrt(Math.max(0, 1 - ((ly - cy) / R) ** 2)) * 1.04;
-          if (hw > 2) {
+          if (hw > 2 && cover > 0.12) {
             const yAt = (xx) => yIn + (yOut - yIn) * (xx - xi) / (xo - xi);   // along the (slanted) lid line
             fctx.lineWidth = 6.5; fctx.beginPath(); fctx.moveTo(cx - hw, yAt(cx - hw));
             fctx.quadraticCurveTo(cx, yAt(cx) - bow * 2, cx + hw, yAt(cx + hw)); fctx.stroke();
@@ -489,10 +489,10 @@ export function createNarang2D(host, o = {}) {
   function drawBlush() {
     if (num.blush < 0.02) return;
     fctx.save();
-    for (const [x, y] of [[272, 650], [698, 632]]) {
-      const g = fctx.createRadialGradient(x - FR.x, y - FR.y, 0, x - FR.x, y - FR.y, 52);
-      g.addColorStop(0, `rgba(255,120,130,${0.42 * num.blush})`); g.addColorStop(1, 'rgba(255,120,130,0)');
-      fctx.fillStyle = g; fctx.beginPath(); fctx.ellipse(x - FR.x, y - FR.y, 60, 48, 0, 0, TAU); fctx.fill();
+    for (const [x, y] of [[276, 650], [680, 631]]) {   // centres of the painted cheeks
+      const g = fctx.createRadialGradient(x - FR.x, y - FR.y, 0, x - FR.x, y - FR.y, 44);
+      g.addColorStop(0, `rgba(255,105,120,${0.38 * num.blush})`); g.addColorStop(0.7, `rgba(255,105,120,${0.25 * num.blush})`); g.addColorStop(1, 'rgba(255,105,120,0)');
+      fctx.fillStyle = g; fctx.beginPath(); fctx.arc(x - FR.x, y - FR.y, 44, 0, TAU); fctx.fill();
     }
     fctx.restore();
   }
@@ -520,7 +520,7 @@ export function createNarang2D(host, o = {}) {
     for (let i = 0; i < n; i++) {
       const a = rand(-PI, 0), sp = rand(120, 300);
       if (type === 'spark') parts.push({ type, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, life: rand(0.7, 1.1), age: 0, s: rand(14, 26), r: rand(0, PI), c: Math.random() < 0.5 ? '#FFD84A' : '#FFFFFF' });
-      else if (type === 'heart') parts.push({ type, x: x + rand(-40, 40), y, vx: rand(-70, 70), vy: rand(-260, -160), life: rand(1.1, 1.6), age: 0, s: rand(18, 30), r: rand(-0.3, 0.3), c: Math.random() < 0.6 ? '#9BE15D' : '#FF7A8A' });
+      else if (type === 'heart') { const sd = x < 476 ? -1 : x > 476 ? 1 : (i % 2 ? 1 : -1); parts.push({ type, x: x + sd * rand(10, 60), y, vx: sd * rand(90, 220), vy: rand(-230, -140), life: rand(1.1, 1.6), age: 0, s: rand(18, 30), r: rand(-0.3, 0.3), c: Math.random() < 0.6 ? '#9BE15D' : '#FF7A8A' }); }
       else if (type === 'z') parts.push({ type, x, y, vx: rand(40, 70), vy: rand(-70, -50), life: 2.6, age: 0, s: rand(30, 40), r: rand(-0.2, 0.1), c: '#8A6A3A' });
       else if (type === 'note') parts.push({ type, x, y, vx: rand(30, 80), vy: rand(-120, -80), life: 1.6, age: 0, s: 34, r: 0, c: '#E0A800' });
       else if (type === 'q' || type === 'ex') parts.push({ type, x, y, vx: 0, vy: -40, life: 1.8, age: 0, s: 84, r: type === 'q' ? 0.15 : -0.1, c: type === 'q' ? '#3D8BFF' : '#FF5A5A' });
@@ -668,27 +668,29 @@ export function createNarang2D(host, o = {}) {
     }, start() { setExpr('laugh'); }, end() { P.sq = 0; P.jy = 0; P.arms = 0; setExpr(baseExpr); } },
 
     love: { dur: 1.9, run(t, s) {
-      if (!s.b) { s.b = 1; const p = mapPoint(A.heart.x, A.heart.y - 30); spawn('heart', p[0], p[1], 9); }
+      if (!s.b) { s.b = 1; for (const sd of [-1, 1]) { const p = mapPoint(A.heart.x + sd * 230, A.heart.y - 60); spawn('heart', p[0], p[1], 5); } }
       heartGlow = 1 + 0.9 * Math.max(0, Math.sin(t * 9)) * (1 - t / 1.9);
       const u = clamp(t / 0.5, 0, 1); P.jy = -26 * Math.sin(PI * u) * (opts.reducedMotion ? 0.3 : 1); P.arms = 10 * Math.sin(PI * clamp(t / 1.2, 0, 1));
       P.head = 0.05 * Math.sin(t * 7) * (1 - t / 1.9);
     }, start() { setExpr('love'); hornKick(-2); }, end() { heartGlow = 1; P.jy = 0; P.arms = 0; P.head = 0; setExpr(baseExpr); } },
 
     tablet: { dur: 3.2, run(t, s) {   // look down at the tablet, tap it, smile
-      const down = smooth(0, 0.4, t) * (1 - smooth(2.5, 2.9, t));
-      look.tx = -0.08 * down; look.ty = 0.95 * down;
+      const down = smooth(0, 0.45, t) * (1 - smooth(2.4, 2.85, t));
+      look.tx = -0.05 * down; look.ty = 1 * down; P.droop = 0.55 * down; ov.lid = 0.38 * down; ov.gz = down;
       const tap = t > 0.6 && t < 2.2 ? Math.max(0, Math.sin((t - 0.6) * TAU * 1.9)) : 0;
       const left = Math.floor((t - 0.6) * 1.9) % 2 === 0;
-      P.tapL = left ? tap * 7 : 0; P.tapR = left ? 0 : tap * 7;
+      P.tapL = left ? tap * 18 : 0; P.tapR = left ? 0 : tap * 18;
       heartGlow = 1 + tap * 0.6;
-      if (tap > 0.95 && !s['h' + Math.floor(t * 2)]) { s['h' + Math.floor(t * 2)] = 1; const p = mapPoint(A.heart.x, A.heart.y - 20); spawn('heart', p[0], p[1], 1); }
+      if (tap > 0.95 && !s['h' + Math.floor(t * 2)]) { s['h' + Math.floor(t * 2)] = 1; const sd = left ? -1 : 1, p = mapPoint(A.heart.x + sd * 200, A.heart.y - 40); spawn('heart', p[0], p[1], 1); }
       if (t > 2.6 && !s.l) { s.l = 1; setExpr('laugh'); hornKick(1.5); }
-    }, start() { pointerT = -10; }, end() { P.tapL = P.tapR = 0; heartGlow = 1; setExpr(baseExpr); } },
+    }, start() { pointerT = -10; }, end() { P.tapL = P.tapR = 0; P.droop = 0; ov.lid = null; ov.gz = null; heartGlow = 1; setExpr(baseExpr); } },
 
     wiggle: { dur: 1.5, run(t) {
-      P.head = 0.07 * Math.sin(t * TAU / 0.75) * (1 - t / 1.5); P.sway = 0.025 * Math.sin(t * TAU / 0.75 + 0.6) * (1 - t / 1.5);
+      const e = 1 - smooth(1.1, 1.5, t);
+      P.head = 0.11 * Math.sin(t * TAU / 0.6) * e; P.sway = 0.045 * Math.sin(t * TAU / 0.6 + 0.5) * e;
+      P.jy = -14 * Math.abs(Math.sin(t * TAU / 0.6)) * e; P.sq = 0.03 * Math.cos(t * TAU / 0.3) * e;
       if (t > 1.1) { const p = mapPoint(780, 280); if (!this.n) { this.n = 1; spawn('note', p[0], p[1], 1); } }
-    }, start() { this.n = 0; setExpr('laugh'); }, end() { P.head = 0; P.sway = 0; setExpr(baseExpr); } },
+    }, start() { this.n = 0; setExpr('laugh'); }, end() { P.head = 0; P.sway = 0; P.jy = 0; P.sq = 0; setExpr(baseExpr); } },
 
     doze: { dur: 4.6, run(t, s) {
       yawnPart(t, s);
@@ -765,11 +767,11 @@ export function createNarang2D(host, o = {}) {
     }, start() { prevExpr = expr = eyeExpr = 'sleep'; eyePending = null; exprT = 1; P.droop = 1; }, end() { aSit = 1; aLie = 0; night = 0; lieS = 1; lieDY = 0; P.sq = 0; } },
 
     nod: { dur: 1.15, run(t) {   // yes, yes
-      P.nod = Math.max(0, Math.sin(t * TAU / 0.52)) * (1 - smooth(0.7, 1.15, t)); P.sq = 0.012 * P.nod;
-    }, start() { setExpr('laugh'); }, end() { P.nod = 0; P.sq = 0; setExpr(baseExpr); } },
+      P.nod = Math.max(0, Math.sin(t * TAU / 0.55)) * (1 - smooth(0.75, 1.15, t)); P.sq = 0.02 * P.nod;
+    }, end() { P.nod = 0; P.sq = 0; } },
 
     shake: { dur: 1.3, run(t) {   // no, no
-      P.shk = 0.9 * Math.sin(t * TAU / 0.44) * (1 - smooth(0.55, 1.3, t)); P.head = -0.045 * P.shk;
+      P.shk = 1.3 * Math.sin(t * TAU / 0.5) * (1 - smooth(0.7, 1.3, t)); P.head = -0.07 * P.shk;
     }, end() { P.shk = 0; P.head = 0; } },
 
     hello: { dur: 1.7, run(t, s) {   // hop, wink, sparkle, wiggle
